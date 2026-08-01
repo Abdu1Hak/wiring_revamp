@@ -98,10 +98,10 @@ function App() {
 
       {result && (
         <div>
-          <h3>{result.title}</h3>
-          <p>{result.summary}</p>
+          <h3>Scope sent to backend</h3>
+          <p>{result.scope}</p>
 
-          <h3>Components Returned by Backend</h3>
+          <h3>Components backend found from database</h3>
           <ul>
             {result.components.map((component) => (
               <li key={component.id}>
@@ -110,16 +110,63 @@ function App() {
             ))}
           </ul>
 
-          <h3>Steps</h3>
-          <ol>
-            {result.steps.map((step) => (
-              <li key={step.id}>
-                <strong>{step.title}</strong>
-                <br />
-                {step.instruction}
-              </li>
-            ))}
-          </ol>
+          <h3>AI Compatibility Check</h3>
+          <p>
+            <strong>Compatible:</strong>{" "}
+            {result.aiResult.compatible ? "Yes" : "No"}
+          </p>
+          <p>{result.aiResult.compatibilitySummary}</p>
+
+          <h3>Missing Components</h3>
+          {result.aiResult.missingComponents.length === 0 ? (
+            <p>None</p>
+          ) : (
+            <ul>
+              {result.aiResult.missingComponents.map((item, index) => (
+                <li key={index}>{item}</li>
+              ))}
+            </ul>
+          )}
+
+          <h3>Warnings</h3>
+          {result.aiResult.warnings.length === 0 ? (
+            <p>None</p>
+          ) : (
+            <ul>
+              {result.aiResult.warnings.map((warning, index) => (
+                <li key={index}>{warning}</li>
+              ))}
+            </ul>
+          )}
+
+          <h3>AI Wiring Steps</h3>
+          {result.aiResult.steps.length === 0 ? (
+            <p>No steps generated.</p>
+          ) : (
+            <ol>
+              {result.aiResult.steps.map((step) => (
+                <li key={step.id}>
+                  <strong>{step.title}</strong>
+                  <br />
+                  {step.instruction}
+                </li>
+              ))}
+            </ol>
+          )}
+
+          <h3>Connections</h3>
+          {result.aiResult.connections.length === 0 ? (
+            <p>No connections generated.</p>
+          ) : (
+            <ul>
+              {result.aiResult.connections.map((connection) => (
+                <li key={connection.id}>
+                  {connection.fromComponent} {connection.fromPin} to{" "}
+                  {connection.toComponent} {connection.toPin} - {connection.label}
+                </li>
+              ))}
+            </ul>
+          )}
 
           <h3>Raw JSON</h3>
           <pre>{JSON.stringify(result, null, 2)}</pre>

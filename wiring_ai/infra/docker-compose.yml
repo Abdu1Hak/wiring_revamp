@@ -1,0 +1,75 @@
+﻿services:
+  # --- PostgreSQL: primary relational database ---
+  postgres:
+    image: postgres:16-alpine
+    container_name: wiring_ai_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-wiring_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-wiring_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wiring_ai} -d ${POSTGRES_DB:-wiring_ai}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - wiring_ai_net
+
+  # --- Redis: caching / task queue broker ---
+  redis:
+    image: redis:7-alpine
+    container_name: wiring_ai_redis
+    restart: unless-stopped
+    command: >
+      redis-server --requirepass ${REDIS_PASSWORD:-redis_password} --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_password}", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - wiring_ai_net
+
+  # --- Qdrant: vector database for semantic search ---
+  qdrant:
+    image: qdrant/qdrant:v1.9.7
+    container_name: wiring_ai_qdrant
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIiwic3ViamVjdCI6ImFwaS1rZXk6NGExYTUwODItNmYxYS00OTNiLWE3MWUtZTMzMWYwMzBjMjg2In0.naafPiq2iKPpvmS_7OORT-ynCztmRGkWJ1xkarw2jDc}
+      QDRANT__LOG_LEVEL: INFO
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - wiring_ai_net
+
+# --- Named volumes: persist data across restarts ---
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:
+
+    # --- Internal bridge network ---
+networks:
+  wiring_ai_net:
+    driver: bridge
