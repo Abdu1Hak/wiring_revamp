@@ -1,30 +1,38 @@
+import time
+from typing import List
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List
+from celery.result import AsyncResult
 
-# IMPORT DATABASE AND AI_SERVICE FUNCTIONS
+# IMPORT DATABASE, REDIS AND CELERY TASKS
 from db.database import get_all_components, get_components_by_ids
 from ai_service import generate_ai_wiring_plan
 from compatibility import run_compatibility_check
 from autofix import run_auto_fix
+from celery_app import celery_app
+from tasks import lookup_component_task
+from redis_client import get_cached_data
 
 app = FastAPI()
 
 # Allows frontend to call backend during development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Pydantic Model 
+# Pydantic Models
 class GenerateProjectRequest(BaseModel):
-    # Include all the feilds with its value type
     scope: str
     selectedComponents: List[str]
+
+
+class ComponentLookupRequest(BaseModel):
+    component_name: str
 
 # backend houses a catalog of components instead of the frontend doing it
 
@@ -94,3 +102,86 @@ async def generate_project(request: GenerateProjectRequest): # Example of a requ
 async def components():
     # get_all_components is now async — we must await it
     return await get_all_components()
+
+
+# ==============================================================================
+# FASTAPI + REDIS + CELERY EXCHANGE ENDPOINTS (main.py)
+# ==============================================================================
+# HOW THE 3-STEP EXCHANGE WORKS:
+#
+# STEP 1: POST /components/lookup (FastAPI checks Redis first)
+#   - User submits component name.
+#   - FastAPI reads Redis RAM (`get_cached_data`).
+#   - If Redis HAS data ("CACHE HIT"): Returns result in < 2ms! (No DB or Celery needed).
+#   - If Redis DOES NOT HAVE data ("CACHE MISS"):
+#     - FastAPI calls `lookup_component_task.delay(name)`.
+#     - This drops a task ticket into Redis broker and returns `{"status": "pending", "task_id": "..."}` in < 1ms.
+#
+# STEP 2: CELERY WORKER (Runs in background Terminal 2)
+#   - Worker sees task ticket in Redis broker, queries PostgreSQL, stores JSON in Redis,
+#     and writes status="SUCCESS" to Redis result backend.
+#
+# STEP 3: GET /jobs/{task_id} (Frontend Polls Status)
+#   - React frontend polls `GET /jobs/{task_id}` every 500ms.
+#   - FastAPI uses `AsyncResult(task_id)` to query Redis for current task state.
+#   - When state == "SUCCESS", returns finished data to frontend!
+# ==============================================================================
+
+
+@app.post("/components/lookup")
+async def lookup_component_endpoint(request: ComponentLookupRequest):
+    """
+    Component Lookup Endpoint:
+    Demonstrates Redis Caching -> Celery Fallback -> Background Worker Execution.
+    """
+    normalized_name = request.component_name.strip().lower()
+    redis_key = f"component_lookup:{normalized_name}"
+
+    # Measure exact time taken to check Redis
+    start_time = time.perf_counter()
+    cached_data = await get_cached_data(redis_key)
+    elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+
+    # PATH A: REDIS CACHE HIT (< 2ms response time)
+    if cached_data:
+        return {
+            "status": "complete",
+            "source": "redis",
+            "elapsed_ms": elapsed_ms,
+            "data": {
+                "category": cached_data.get("category", "N/A"),
+                "description": cached_data.get("description", "")
+            }
+        }
+
+    # PATH B: REDIS CACHE MISS -> DISPATCH TASK TO CELERY BROKER (< 1ms dispatch time)
+    # `.delay()` sends a JSON task ticket to Redis without blocking FastAPI!
+    task = lookup_component_task.delay(normalized_name)
+
+    return {
+        "status": "pending",
+        "source": "celery",
+        "task_id": task.id,
+        "elapsed_ms": elapsed_ms
+    }
+
+
+@app.get("/jobs/{task_id}")
+def get_job_status(task_id: str):
+    """
+    Poll Endpoint for Celery Task State:
+    Queries Redis Result Backend for status (PENDING -> STARTED -> SUCCESS / FAILURE).
+    """
+    # AsyncResult checks Redis for task_id status
+    task_result = AsyncResult(task_id, app=celery_app)
+    response = {
+        "task_id": task_id,
+        "status": task_result.status,  # PENDING, STARTED, SUCCESS, FAILURE
+    }
+
+    if task_result.status == "SUCCESS":
+        response["result"] = task_result.result
+    elif task_result.status == "FAILURE":
+        response["error"] = str(task_result.result)
+
+    return response

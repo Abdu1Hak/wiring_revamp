@@ -461,8 +461,7 @@ components = [
 import asyncio
 import os
 from dotenv import load_dotenv
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import delete, insert, text
 
 from .models import components_table, metadata
@@ -482,6 +481,12 @@ async def seed_database_async():
         )
 
     engine = create_async_engine(DATABASE_URL, echo=False)
+    
+    AsyncSessionLocal = async_sessionmaker(
+        bind=engine,
+        expire_on_commit=False,
+    )
+
     db_label = DATABASE_URL.split("@")[-1]  # "localhost:5432/wiring_ai"
     print(f"[Seed] Targeting PostgreSQL: {db_label}")
 
