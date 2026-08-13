@@ -36,9 +36,9 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://:redis_password@localhost:6379/0")
 # Initialize Celery app instance
 celery_app = Celery(
     "wiring_ai",
-    broker=REDIS_URL,
-    backend=REDIS_URL,
-    include=["tasks"],  # Tells Celery to load background functions from tasks.py
+    broker=REDIS_URL, # redis used as a queue broker (fastapi drops task message here)
+    backend=REDIS_URL, # redis used as a result backend (worker finished output here)
+    include=["jobs.tasks"],  # Tells Celery to load background functions from tasks.py
 )
 
 # Celery Configuration Settings

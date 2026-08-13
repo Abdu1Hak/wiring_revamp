@@ -67,4 +67,9 @@ components_table = Table(
     Column("total_pwm_pins",       Integer),
     Column("has_wifi",             Boolean, default=False),
     Column("has_bluetooth",        Boolean, default=False),
+
+    # --- NEW -----
+    Column("datasheet_url",         Text),
+    Column("datasheet_summary",     Text),
+    Column('qdrant_indexed', Boolean, default=False)
 )

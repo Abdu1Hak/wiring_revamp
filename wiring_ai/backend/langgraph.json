@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "preprocess": "./pipeline/pre_processing/graph.py:preprocess_graph"
+  },
+  "env": ".env"
+}

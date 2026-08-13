@@ -1,21 +1,15 @@
-# alembic/env.py
-# ---------------
 # Alembic runs this file every time you run an "alembic" command.
 # Its job is to:
 #   1. Connect to the database
 #   2. Tell Alembic which tables/metadata to track
 #   3. Run migrations in the right mode (online = live DB, offline = generate SQL)
-#
-# We override the URL from the .ini file with whatever is in .env so that
-# the same alembic.ini works for every developer without editing it.
 
 import os
 import sys
+from dotenv import load_dotenv
 from logging.config import fileConfig
-
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine
-
 from alembic import context
 
 # ---------------------------------------------------------------------------
@@ -29,7 +23,7 @@ load_dotenv(os.path.join(db_dir, ".env"))
 load_dotenv()  # reads DATABASE_URL from .env
 
 # Import our table definitions so Alembic can diff them against the real DB
-from models import metadata
+from db.models import metadata
 
 # ---------------------------------------------------------------------------
 # Standard Alembic boilerplate — reads logging config from alembic.ini
