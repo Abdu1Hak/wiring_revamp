@@ -132,10 +132,12 @@ async def validate_datasheet_node(state: PreProcessState)-> PreProcessState:
     
     """
     Flow -
-    - No pdf uploaded -> needs web search = True (go find one lol)
-    - PDF uploaded -> extract first 3 pages -> gemini analysis 
-        - Valid: datasheet_valid = True 
-        - Invalid: needs_web_search = True 
+    - PDF uploaded             -> extract first 3 pages -> Gemini validation
+    - URL provided (no PDF)    -> download PDF from URL -> Gemini validation
+    - Nothing provided         -> needs_web_search = True (Tavily fallback)
+    
+    Valid datasheet:  datasheet_valid = True  -> dispatch_ingestion
+    Invalid/no data:  needs_web_search = True -> web_search_node
     """
     logger.info(f"[NODE:validate_datasheet] component={state['component_id']}")
     state["status"] = "validating"
@@ -143,22 +145,75 @@ async def validate_datasheet_node(state: PreProcessState)-> PreProcessState:
     state["needs_web_search"] = False
 
     pdf_bytes: Optional[bytes] = state.get("pdf_bytes")
+    datasheet_url: Optional[str] = state.get("datasheet_url")
 
-    # -- No file provided -> go to web search automatically ---------
-    if not pdf_bytes: 
-        logger.info("[NODE:validate_datasheet] No PDF provided — triggering web search")
+    # -- Path B: URL provided but no file uploaded → download PDF from URL --
+    if not pdf_bytes and datasheet_url:
+        logger.info(f"[NODE:validate_datasheet] URL provided — downloading: {datasheet_url}")
+        state["validation_message"] = f"Downloading datasheet from provided URL..."
+        try:
+            import httpx
+            # Browser-like headers — required by TI, Vishay, NXP, Mouser CDNs
+            # that block bare Python requests with 403 or return HTML redirect pages
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/125.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/pdf,application/octet-stream,*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": "https://www.google.com/",
+            }
+            async with httpx.AsyncClient(follow_redirects=True, timeout=30, headers=headers) as client:
+                response = await client.get(datasheet_url)
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "").lower()
+                content_start = response.content[:5]
+
+                # Detect PDF by: content-type, URL extension, or magic bytes (%PDF)
+                is_pdf = (
+                    "pdf" in content_type
+                    or datasheet_url.lower().endswith(".pdf")
+                    or content_start == b"%PDF-"
+                )
+
+                if is_pdf:
+                    pdf_bytes = response.content
+                    logger.info(f"[NODE:validate_datasheet] Downloaded PDF from URL: {len(pdf_bytes)} bytes")
+                else:
+                    # Returned HTML — try Playwright to find embedded PDF link
+                    logger.warning(
+                        f"[NODE:validate_datasheet] URL returned non-PDF "
+                        f"(content-type: {content_type}) — trying Playwright"
+                    )
+                    from rag.ingestor import fetch_url_with_playwright
+                    pdf_bytes = await fetch_url_with_playwright(datasheet_url)
+                    logger.info(f"[NODE:validate_datasheet] Playwright fetched PDF: {len(pdf_bytes)} bytes")
+        except Exception as e:
+            logger.warning(f"[NODE:validate_datasheet] Failed to download URL '{datasheet_url}': {e} — falling back to web search")
+            state["needs_web_search"] = True
+            state["validation_message"] = (
+                f"Could not download datasheet from provided URL — "
+                f"searching web for '{state['component_name']}'..."
+            )
+            return state
+
+    # -- Path C: Nothing provided → trigger Tavily web search ---------------
+    if not pdf_bytes:
+        logger.info("[NODE:validate_datasheet] No PDF or URL provided — triggering web search")
         state["needs_web_search"] = True
         state["validation_message"] = f"No datasheet provided. Searching the web for '{state['component_name']}'..."
-        return state 
-    
-    # -- file provided -> validate with gemini 
+        return state
+
+    # -- Path A/B continued: Validate PDF bytes with Gemini -----------------
     try: 
         from rag.ingestor import extract_first_pages_for_validation
-        preview_text = extract_first_pages_for_validation(pdf_bytes, num_pages=3)
+        preview_text = extract_first_pages_for_validation(pdf_bytes, num_pages=1)
 
         if len(preview_text.strip()) < 100: 
-            # cant extract text - likely a scanned pdf 
-            logger.warning("[NODE: validate_datasheet] PDF Appears to be image-based")
+            # Can't extract text — likely a scanned PDF (OCR should have caught it, but fallback)
+            logger.warning("[NODE: validate_datasheet] PDF appears to be image-based with no extractable text")
             state["needs_web_search"] = True
             state["validation_message"] = (
                 "Uploaded file appears to be a scanned image — "
@@ -169,13 +224,28 @@ async def validate_datasheet_node(state: PreProcessState)-> PreProcessState:
         model = gemini_model()
         prompt = VALIDATION_PROMPT.format(text=preview_text[:4000])
 
-        # Enforce JSON output mode
-        response = model.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json"),
-        )
-        if not response.text: 
+        # Enforce JSON output mode with rate limit retry awareness
+        response = None
+        for attempt in range(3):
+            try:
+                response = model.models.generate_content(
+                    model="gemini-3.6-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json"),
+                )
+                break
+            except Exception as e:
+                err_str = str(e).lower()
+                if ("429" in err_str or "quota" in err_str or "resource_exhausted" in err_str or "overloaded" in err_str) and attempt < 2:
+                    wait_time = (attempt + 1) * 5
+                    logger.warning(f"[NODE:validate_datasheet] Rate limited/overloaded. Retrying in {wait_time}s...")
+                    state["status"] = "rate_limited"
+                    state["validation_message"] = f"AI Rates are limited. Retrying in {wait_time}s..."
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise
+
+        if not response or not response.text: 
             raise ValueError("No response from Gemini validation")
         # Safely strip markdown wrappers if present
         clean_text = response.text.strip()

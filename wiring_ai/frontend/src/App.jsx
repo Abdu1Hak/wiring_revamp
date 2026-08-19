@@ -26,6 +26,8 @@ export default function App() {
   const [activeCategory, setActiveCategory] = useState("all");
   const [selectedComponent, setSelectedComponent] = useState(null);
   const [activeTab, setActiveTab] = useState("catalog"); // "catalog" | "onboard"
+  const [deletingComponent, setDeletingComponent] = useState(null); // { id, name }
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Fetch component list from backend database
   const fetchComponents = useCallback(async () => {
@@ -35,7 +37,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/components`);
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const data = await res.json();
-      
+
       // Handle both array response and { components: [...] } dictionary response
       const list = Array.isArray(data) ? data : data.components || [];
       setComponents(list);
@@ -46,6 +48,33 @@ export default function App() {
       setLoading(false);
     }
   }, []);
+
+  const handleOpenDeleteModal = (e, id, name) => {
+    if (e) e.stopPropagation();
+    setDeletingComponent({ id, name });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingComponent) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/components/${deletingComponent.id}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setComponents((prev) => prev.filter((c) => c.id !== deletingComponent.id));
+        if (selectedComponent?.id === deletingComponent.id) setSelectedComponent(null);
+        setDeletingComponent(null);
+      } else {
+        alert("Failed to delete component from backend.");
+      }
+    } catch (err) {
+      alert(`Error deleting component: ${err.message}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
 
   useEffect(() => {
     fetchComponents();
@@ -186,6 +215,7 @@ export default function App() {
                       onSelect={() =>
                         setSelectedComponent(selectedComponent?.id === comp.id ? null : comp)
                       }
+                      onDelete={(e) => handleOpenDeleteModal(e, comp.id, comp.name)}
                     />
                   ))}
                 </div>
@@ -214,6 +244,17 @@ export default function App() {
         <ComponentDetailModal
           component={selectedComponent}
           onClose={() => setSelectedComponent(null)}
+          onDelete={(e) => handleOpenDeleteModal(e, selectedComponent.id, selectedComponent.name)}
+        />
+      )}
+
+      {/* ── DELETE CONFIRMATION MODAL ── */}
+      {deletingComponent && (
+        <DeleteConfirmModal
+          component={deletingComponent}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setDeletingComponent(null)}
+          isDeleting={isDeleting}
         />
       )}
     </div>
@@ -221,7 +262,7 @@ export default function App() {
 }
 
 /* ─── COMPONENT CARD ITEM ────────────────────────────────────────────── */
-function ComponentCard({ component, isSelected, onSelect }) {
+function ComponentCard({ component, isSelected, onSelect, onDelete }) {
   const icon =
     CATEGORY_ICON[(component.category || "").toLowerCase()] || CATEGORY_ICON.default;
 
@@ -240,6 +281,13 @@ function ComponentCard({ component, isSelected, onSelect }) {
           <span className="card-id-badge">{component.id}</span>
         </div>
         <span className="card-cat-badge">{component.category || "General"}</span>
+        <button
+          className="delete-card-btn"
+          onClick={(e) => onDelete(e)}
+          title="Delete component from catalog & vector DB"
+        >
+          🗑️
+        </button>
       </div>
 
       <p className="card-desc">
@@ -278,7 +326,7 @@ function ComponentCard({ component, isSelected, onSelect }) {
 }
 
 /* ─── COMPONENT DETAIL MODAL ────────────────────────────────────────── */
-function ComponentDetailModal({ component, onClose }) {
+function ComponentDetailModal({ component, onClose, onDelete }) {
   const icon =
     CATEGORY_ICON[(component.category || "").toLowerCase()] || CATEGORY_ICON.default;
 
@@ -293,9 +341,18 @@ function ComponentDetailModal({ component, onClose }) {
               <span className="modal-sub">ID: {component.id} · Category: {component.category}</span>
             </div>
           </div>
-          <button className="modal-close" onClick={onClose}>
-            ✕
-          </button>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <button
+              className="delete-card-btn"
+              onClick={(e) => onDelete(e, component.id, component.name)}
+              title="Delete component"
+            >
+              🗑️
+            </button>
+            <button className="modal-close" onClick={onClose}>
+              ✕
+            </button>
+          </div>
         </header>
 
         <div className="modal-body">
@@ -322,8 +379,8 @@ function ComponentDetailModal({ component, onClose }) {
                 {component.power?.current_mA
                   ? `${component.power.current_mA} mA`
                   : component.max_current_per_pin_mA
-                  ? `${component.max_current_per_pin_mA} mA/pin`
-                  : "N/A"}
+                    ? `${component.max_current_per_pin_mA} mA/pin`
+                    : "N/A"}
               </span>
             </div>
 
@@ -379,6 +436,30 @@ function ComponentDetailModal({ component, onClose }) {
               </a>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── CUSTOM DELETE CONFIRMATION MODAL ────────────────────────────────── */
+function DeleteConfirmModal({ component, onConfirm, onCancel, isDeleting }) {
+  if (!component) return null;
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal-content delete-confirm-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="delete-modal-icon">⚠️</div>
+        <h3 className="delete-modal-title">Delete Component</h3>
+        <p className="delete-modal-desc">
+          Are you sure you want to delete <strong>{component.name || component.id}</strong>? This will permanently remove its catalog record from PostgreSQL and purge its vector embeddings from Qdrant.
+        </p>
+        <div className="delete-modal-actions">
+          <button className="delete-cancel-btn" onClick={onCancel} disabled={isDeleting}>
+            Cancel
+          </button>
+          <button className="delete-confirm-btn" onClick={onConfirm} disabled={isDeleting}>
+            {isDeleting ? "Deleting..." : "Delete Component"}
+          </button>
         </div>
       </div>
     </div>

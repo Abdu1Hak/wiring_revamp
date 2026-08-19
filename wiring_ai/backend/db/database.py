@@ -8,13 +8,15 @@
 #   - Database queries utilize SQLAlchemy's query builder (select, in_) for type safety
 #     and parameterization against SQL injection.
 
+from qdrant_client.conversions.common_types import PointsSelector
 import os
 import json
 from dotenv import load_dotenv
 # common query builders
 from sqlalchemy import select, text, func, or_
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from qdrant_client import QdrantClient
+from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 from .models import components_table, metadata
 
 # ---------------------------------------------------------------------------
@@ -190,3 +192,51 @@ async def get_component_by_name(component_name: str) -> dict | None:
         if row:
             return _parse_component(dict(row))
         return None
+
+
+async def delete_component_by_id(component_id:str) -> bool: 
+    """
+    Delete a component from the postgreSQL database and purges its vector chunks from the Qdrant VectorDB 
+    """ 
+
+    if not component_id: 
+        return False 
+    
+    norm_id = component_id.strip().lower() 
+
+    # 1. delete from postgreSQL 
+    async with AsyncSessionLocal() as session: 
+        result = await session.execute(
+            text("DELETE FROM components WHERE LOWER(id) = LOWER(:id) OR LOWER(name) = LOWER(:id)"),
+            {"id": norm_id}
+        )
+        await session.commit()
+        deleted_count = result.rowcount or 0 
+
+
+    # 2. delete vectors from qdrant 
+    try: 
+        q_host = os.getenv("QDRANT_HOST", "localhost")
+        q_port = int(os.getenv("QDRANT_PORT", "6333"))
+        q_key = os.getenv("QDRANT_API_KEY", None)
+
+        qdrant = QdrantClient(host=q_host, port=q_port, api_key=q_key, https=False, timeout=10)
+        qdrant.delete(
+            collection_name="datasheets",
+            points_selector=Filter(
+                must=[FieldCondition(
+                    key="component_id",
+                    match=MatchValue(value=norm_id)
+                )]
+            )
+        )
+    except Exception as e: 
+        print(f"[DB DELETE]: Warning: Could not purge Qdrant points for {norm_id}: {e}")
+    print("Deleted Rows", deleted_count)
+    return deleted_count > 0 
+
+
+        
+        
+
+        

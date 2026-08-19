@@ -29,6 +29,7 @@ const PROGRESS_STEP_LABELS = {
   embedding: "Generating Embeddings",
   storing: "Storing in Vector DB",
   updating_catalog: "Updating Catalog",
+  rate_limited: "AI Rates are Limited",
   complete: "Complete",
 };
 
@@ -221,6 +222,20 @@ export default function OnboardPanel({ onComponentAdded }) {
     ? (PROGRESS_STEP_LABELS[latestProgressEvent.step] || latestProgressEvent.message || latestProgressEvent.step)
     : "Processing...";
 
+  // Detect rate limiting state
+  const lastEvent = events[events.length - 1];
+  const isRateLimited = isStreaming && (
+    latestProgressEvent?.step === "rate_limited" ||
+    lastEvent?.step === "rate_limited" ||
+    lastEvent?.status === "rate_limited" ||
+    (lastEvent?.message && (
+      lastEvent.message.toLowerCase().includes("ai rates are limited") ||
+      lastEvent.message.toLowerCase().includes("rate limit") ||
+      lastEvent.message.toLowerCase().includes("overloaded") ||
+      lastEvent.message.toLowerCase().includes("quota")
+    ))
+  );
+
   // ─── Render ──────────────────────────────────────────────────────────────
   return (
     <div style={styles.panel}>
@@ -288,15 +303,33 @@ export default function OnboardPanel({ onComponentAdded }) {
           </h3>
 
           {/* Dedicated Live Progress Header */}
-          {isStreaming && activePct > 0 && (
+          {(isStreaming || finalStatus === "complete") && (
             <div style={styles.activeProgressBox}>
               <div style={styles.activeProgressHeader}>
-                <span style={styles.activeProgressLabel}>⚡ {activeLabel}</span>
-                <span style={styles.activeProgressPct}>{activePct}%</span>
+                <span style={styles.activeProgressLabel}>
+                  ⚡ {finalStatus === "complete" ? "Datasheet Onboarding Complete" : activeLabel}
+                </span>
+                <span style={styles.activeProgressPct}>
+                  {finalStatus === "complete" ? 100 : activePct}%
+                </span>
               </div>
               <div style={styles.activeProgressBarTrack}>
-                <div style={{ ...styles.activeProgressBarFill, width: `${activePct}%` }} />
+                <div
+                  style={{
+                    ...styles.activeProgressBarFill,
+                    width: `${finalStatus === "complete" ? 100 : activePct}%`,
+                    background: finalStatus === "complete" ? "#10b981" : "linear-gradient(90deg, var(--accent), var(--accent-2))"
+                  }}
+                />
               </div>
+
+              {/* Rate Limit Alert right below the progress bar */}
+              {isRateLimited && (
+                <div style={styles.rateLimitBanner}>
+                  <span style={styles.rateLimitIcon}>⚠️</span>
+                  <span><strong>AI Rates are limited</strong> — Automatically retrying in a moment...</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -362,6 +395,22 @@ const styles = {
   activeProgressBarFill: {
     height: "100%", background: "linear-gradient(90deg, var(--accent), var(--accent-2))",
     transition: "width 0.4s ease", borderRadius: "4px"
+  },
+  rateLimitBanner: {
+    marginTop: "10px",
+    padding: "8px 12px",
+    background: "rgba(245, 158, 11, 0.15)",
+    border: "1px solid rgba(245, 158, 11, 0.4)",
+    borderRadius: "var(--radius-sm)",
+    color: "#f59e0b",
+    fontSize: "13px",
+    fontWeight: 500,
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+  },
+  rateLimitIcon: {
+    fontSize: "15px",
   },
 
   eventList: {

@@ -19,6 +19,7 @@ import json
 from google import genai
 from google.genai import types 
 import uuid 
+import time 
 
 from jobs.celery_app import celery_app
 from rag.chunker import chunk_text
@@ -35,10 +36,9 @@ from qdrant_client.models import (
     Distance,
     VectorParams,
     PointStruct,
-    Filter,
-    FieldCondition,
-    MatchAny,
 )
+import asyncio
+from db.database import delete_component_by_id
 
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
@@ -89,16 +89,16 @@ def _get_sync_redis_client() -> redis.Redis:
 QDRANT_COLLECTION = "datasheets"
 
 def _publish_progress(r: redis.Redis, job_id: str, step: str, message: str, progress: int ):
-    """ Write progress to Redish Hash - Polled by FastAPI SSE Endpoint"""
+    """ Write progress to Redis Hash - Polled by FastAPI SSE Endpoint"""
 
-    r.hset(f"job: {job_id}", mapping={
+    r.hset(f"job:{job_id}", mapping={
         "step": step, 
         "message": message, 
         "progress": str(progress),
         "status": "running",
         "updated_at": datetime.now(timezone.utc).isoformat(), 
     })
-    r.expire(f"job: {job_id}", 3600) # 1 hours 
+    r.expire(f"job:{job_id}", 3600) # 1 hour
     logger.info(f"[Celery: {job_id}] {progress}% - {message}")
 
 def _publish_complete(r: redis.Redis, job_id: str, metadata: dict):
@@ -161,23 +161,26 @@ Return ONLY valid JSON matching this exact schema:
   "compatible_boards": []
 }}
 Rules:
-- `pins`: list every pin found in the datasheet. type is one of: power | digital | analog | pwm | i2c | spi | uart | ground
-- `power`: extract voltage range as a string (e.g., "3.3-5V") and typical current draw in mA
-- `constraints`: ONLY include if the datasheet explicitly mentions a requirement (pull-up, resistor, decoupling cap, etc.)
+- `pins`: list every pin found in the datasheet with its pin number and exact functional role (e.g. "Pin 1 (Anode E)", "Pin 6 (Digit 4 Common Cathode)"). Do NOT list generic names like "Pin 1" or "1". `type` is one of: power | digital | analog | pwm | i2c | spi | uart | ground
+- `power`: extract operating voltage range or Forward Voltage Vf as a string (e.g. "2.05-2.6V" or "3.3-5V") and max/typical DC current draw in mA (e.g. 25)
+- `constraints`: ONLY include if the datasheet explicitly mentions a requirement (pull-up, current-limiting resistor, decoupling cap, etc.)
 - `tags`: 3-6 relevant keywords
 - `compatible_boards`: leave as empty list — unknown from datasheet alone
 - For microcontrollers/boards: add a "board_info" key with total_digital_pins, total_analog_pins, total_pwm_pins, has_wifi, has_bluetooth
-Datasheet text (first 3000 chars):
+Datasheet text:
 {text}
 """
-def _extract_metadata_with_gemini(raw_text: str, component_id: str) -> dict: 
+# pyrefly: ignore [bad-function-definition]
+def _extract_metadata_with_gemini(raw_text: str, component_id: str, r: redis.Redis = None, job_id: str = None) -> dict: 
     """ Use Gemini to extract metadata from datasheet text """
-    prompt = METADATA_PROMPT.format(text=raw_text[:3000])
+    prompt = METADATA_PROMPT.format(text=raw_text[:40000])
+    backoffs = [10, 20, 30, 45, 60]
 
-    for attempt in range(3):
+    last_error = None
+    for attempt, wait_time in enumerate(backoffs):
         try: 
             response = client.models.generate_content(
-                model="gemini-2.5-flash-lite",
+                model="gemini-3.6-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json"
@@ -193,15 +196,18 @@ def _extract_metadata_with_gemini(raw_text: str, component_id: str) -> dict:
                 return metadata
             break
         except Exception as e:
-            if "429" in str(e) or "quota" in str(e).lower():
-                wait_time = (attempt + 1) * 5
-                logger.warning(f"[Metadata Extraction] Rate limited (429). Retrying in {wait_time}s...")
+            last_error = e
+            err_str = str(e).lower()
+            if "429" in err_str or "quota" in err_str or "overloaded" in err_str or "resource_exhausted" in err_str:
+                logger.warning(f"[Metadata Extraction] Rate limited (attempt {attempt+1}/{len(backoffs)}). Retrying in {wait_time}s...")
+                if r and job_id:
+                    _publish_progress(r, job_id, "rate_limited", f"AI Rates are limited. Retrying in {wait_time}s...", 35)
                 time.sleep(wait_time)
             else:
                 logger.error(f"[Metadata Extraction] Failed for {component_id}: {e}")
-                break
+                raise e
 
-    return {"component_id": component_id}
+    raise RuntimeError(f"Metadata extraction failed for '{component_id}' after retries: {last_error}")
         
     
 
@@ -267,7 +273,7 @@ def ingest_datasheet_task(self, component_id:str, job_id: str, pdf_path:str|None
 
         # ── Step 3: Extract Metadata → Seed PostgreSQL ───────────────────────
         _publish_progress(r, job_id, "analyzing", "Analyzing component metadata...", 35)
-        metadata = _extract_metadata_with_gemini(raw_text, component_id)
+        metadata = _extract_metadata_with_gemini(raw_text, component_id, r, job_id)
         # Prepare clean parameters for INSERT into components table
         id_val = metadata.get("id") or metadata.get("component_id") or component_id
 
@@ -351,9 +357,12 @@ def ingest_datasheet_task(self, component_id:str, job_id: str, pdf_path:str|None
         _publish_progress(r, job_id, "embedding", "Generating embeddings (0%)...", 65)
         texts = [c["text"] for c in chunks]
 
-        def on_embed_progress(b_num, total_b):
-            pct = 65 + int((b_num / total_b) * 20)  # 65% to 85%
-            _publish_progress(r, job_id, "embedding", f"Generating embeddings ({b_num}/{total_b})...", pct)
+        def on_embed_progress(b_num, total_b, is_rate_limited=False, wait_time=0):
+            if is_rate_limited:
+                _publish_progress(r, job_id, "rate_limited", f"AI Rates are limited. Retrying in {wait_time}s...", 65)
+            else:
+                pct = 65 + int((b_num / total_b) * 20)  # 65% to 85%
+                _publish_progress(r, job_id, "embedding", f"Generating embeddings ({b_num}/{total_b})...", pct)
 
         vectors = embed_chunks(texts, progress_callback=on_embed_progress)
         # ── Step 6: Upsert into Qdrant ───────────────────────────────────────
@@ -391,7 +400,24 @@ def ingest_datasheet_task(self, component_id:str, job_id: str, pdf_path:str|None
         _publish_complete(r, job_id, metadata)
         logger.info(f"[CELERY:{job_id}] ✓ Ingestion complete for {component_id}")
         return {"status": "complete", "component_id": component_id, "chunks": len(chunks)}
+    
+    
     except Exception as exc:
         logger.error(f"[CELERY:{job_id}] ✗ Ingestion failed: {exc}", exc_info=True)
-        _publish_failed(r, job_id, str(exc))
+        err_str = str(exc).lower()
+        if "429" in err_str or "quota" in err_str or "overloaded" in err_str or "resource_exhausted" in err_str:
+            _publish_progress(r, job_id, "rate_limited", f"AI Rates are limited. Retrying in 30s...", 0)
+        else:
+            _publish_failed(r, job_id, str(exc))
+
+        # Automatic Rollback: delete inindexed orphan row from PostgreSQL if pipeline failed 
+        try: 
+            # how to call async function inside a synchronous celery agent
+            asyncio.run(delete_component_by_id(component_id))
+            logger.info(f"[CLEANUP] Purged PostgreSQL and Qdrant entries for '{component_id}'")
+        
+        except Exception as cleanup_err:
+            logger.warning(f"[CLEANUP] Failed to purge '{component_id}': {cleanup_err}")
+
+
         raise self.retry(exc=exc, countdown=30)

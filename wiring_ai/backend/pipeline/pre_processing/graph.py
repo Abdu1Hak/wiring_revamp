@@ -13,6 +13,7 @@ def route_after_check(state: PreProcessState) -> str:
     if state["already_indexed"]:
         return "already_done"
     return "validate"
+
 def route_after_validation(state: PreProcessState) -> str:
     """After validation: search web if no valid PDF, else dispatch directly."""
     if state.get("status") == "failed":
@@ -20,16 +21,19 @@ def route_after_validation(state: PreProcessState) -> str:
     if state["needs_web_search"]:
         return "search"
     return "dispatch"
+
 def route_after_web_search(state: PreProcessState) -> str:
     """After web search: dispatch if we got a PDF, else fail."""
     if state.get("status") == "failed" or not state.get("pdf_base64"):
         return "failed"
     return "dispatch"
+
 def route_after_dispatch(state: PreProcessState) -> str:
     """After dispatch: finalize if job dispatched, else fail."""
     if state.get("status") == "failed":
         return "failed"
     return "finalize"
+
 # ─── Graph Builder ────────────────────────────────────────────────────────────
 def build_preprocess_graph():
     # pyrefly: ignore [bad-specialization]
@@ -40,8 +44,10 @@ def build_preprocess_graph():
     g.add_node("web_search",         web_search_node)
     g.add_node("dispatch_ingestion", dispatch_ingestion_node)
     g.add_node("poll_and_finalize",  poll_and_finalize_node)
+
     # Entry point
     g.set_entry_point("check_vector_db")
+
     # Conditional edges
     g.add_conditional_edges(
         "check_vector_db",
@@ -65,5 +71,6 @@ def build_preprocess_graph():
     )
     g.add_edge("poll_and_finalize", END)
     return g.compile()
+
 # Singleton — import this in FastAPI routes
 preprocess_graph = build_preprocess_graph()

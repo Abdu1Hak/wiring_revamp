@@ -4,7 +4,7 @@
 # ---------------------------------------------------------------------------
 import logging
 from fastapi import APIRouter, HTTPException
-from db.database import get_all_components, get_component_by_name
+from db.database import get_all_components, get_component_by_name, delete_component_by_id 
 
 logger = logging.getLogger(__name__)
 
@@ -40,3 +40,15 @@ async def get_component(component_id: str):
     except Exception as e:
         logger.error(f"[Components API] Error fetching component '{component_id}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to fetch component: {str(e)}")
+
+@router.delete("/{component_id}")
+async def delete_component(component_id: str):
+    """
+    Deletes a component from the database.
+    """
+    try:
+        await delete_component_by_id(component_id)
+        return {"message": f"Component '{component_id}' deleted successfully"}
+    except Exception as e:
+        logger.error(f"[Components API] Error deleting component '{component_id}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to delete component: {str(e)}")

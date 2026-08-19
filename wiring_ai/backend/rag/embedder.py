@@ -85,9 +85,12 @@ def embed_chunks(texts: list[str], progress_callback=None) -> list[list[float]]:
                 break  # Exit retry loop on success!
 
             except Exception as e:
-                if "429" in str(e) or "quota" in str(e).lower() or "resource_exhausted" in str(e).lower():
+                err_str = str(e).lower()
+                if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str or "overloaded" in err_str:
                     wait_time = (attempt + 1) * 15  # 15s, 30s, 45s, 60s
-                    logger.warning(f"[EMBEDDER] Rate limited (429). Retrying batch {batch_num} in {wait_time}s...")
+                    logger.warning(f"[EMBEDDER] Rate limited (429/Overloaded). Retrying batch {batch_num} in {wait_time}s...")
+                    if progress_callback:
+                        progress_callback(batch_num, total_batches, is_rate_limited=True, wait_time=wait_time)
                     time.sleep(wait_time)
                 else:
                     logger.error(f"[EMBEDDER] Embedding failed: {e}")

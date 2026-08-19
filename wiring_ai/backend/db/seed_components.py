@@ -445,6 +445,236 @@ components = [
         "compatible_boards": ["arduino_uno"],
         "tags": ["resistor", "passive", "4.7k"],
         "_needs_review": False
+    },
+
+    # 16. Breadboard Power Supply Module
+    {
+        "id": "power_supply_module",
+        "name": "Breadboard Power Supply Module",
+        "category": "power",
+        "description": "Breadboard-mountable power supply with selectable 3.3V/5V dual output rails. Accepts 6.5V-12V DC barrel jack or 5V USB. Max 700mA per rail. Independently switchable rails A and B.",
+        "pins": [
+            {"name": "OUT_A", "type": "power", "required": False, "notes": "Rail A output — jumper-selectable 3.3V or 5V. To breadboard +ve rail side A."},
+            {"name": "OUT_B", "type": "power", "required": False, "notes": "Rail B output — jumper-selectable 3.3V or 5V. To breadboard +ve rail side B."},
+            {"name": "GND_A", "type": "ground", "required": True, "notes": "Ground for rail A. To breadboard -ve rail side A."},
+            {"name": "GND_B", "type": "ground", "required": True, "notes": "Ground for rail B. To breadboard -ve rail side B."},
+            {"name": "DC_IN", "type": "power", "required": True, "notes": "6.5V-12V DC barrel jack input (centre-positive 5.5x2.1mm)."},
+            {"name": "USB_IN", "type": "power", "required": False, "notes": "Mini-USB 5V input alternative."},
+            {"name": "ON_OFF", "type": "digital_input", "required": False, "notes": "Slide switch to enable/disable output."}
+        ],
+        "power": {"voltage": 5.0, "voltage_tolerance": [3.3, 5.0], "current_mA": 700.0, "current_max_mA": 700.0},
+        "constraints": [
+            {"type": "shared_ground", "condition": "Module GND not connected to Arduino GND when both sources active.", "resolution": "Always connect module GND rail to Arduino GND for common reference. Floating grounds cause undefined logic levels.", "auto_fixable": False, "severity": "danger"},
+            {"type": "input_voltage_range", "condition": "Input below 6.5V or above 12V on DC jack.", "resolution": "Use 7V-12V adapter or 5V USB. Outside range causes under-voltage or IC damage.", "auto_fixable": False, "severity": "danger"}
+        ],
+        "compatible_boards": ["arduino_uno"],
+        "tags": ["power", "supply", "breadboard", "3.3v", "5v", "regulator", "module"],
+        "_needs_review": False
+    },
+
+    # 17. 10kΩ NTC Thermistor
+    {
+        "id": "thermistor_10k",
+        "name": "10k NTC Thermistor",
+        "category": "sensor",
+        "description": "Negative Temperature Coefficient thermistor, 10kΩ at 25°C (B=3950K). Resistance falls as temperature rises. Used in voltage-divider with a 10kΩ fixed resistor on analog input. Range: -55°C to +125°C.",
+        "pins": [
+            {"name": "leg_1", "type": "passive", "required": True, "notes": "Terminal 1 — polarity-insensitive. Connect to VCC side of voltage divider."},
+            {"name": "leg_2", "type": "passive", "required": True, "notes": "Terminal 2 — connect through 10kΩ resistor to GND. Read analog voltage at junction."}
+        ],
+        "power": {"voltage": 0.0, "current_mA": 0.0},
+        "constraints": [
+            {"type": "requires_voltage_divider", "condition": "Thermistor connected directly to analog pin without series resistor.", "resolution": "Wire thermistor between VCC and analog pin, add 10kΩ from analog pin to GND. Read junction voltage to compute resistance and temperature.", "auto_fixable": True, "fix_component_id": "resistor_10k", "severity": "warning"}
+        ],
+        "compatible_boards": ["arduino_uno"],
+        "tags": ["thermistor", "ntc", "temperature", "analog", "sensor", "10k"],
+        "_needs_review": False
+    },
+
+    # 18. SW-520D Tilt Ball Switch
+    {
+        "id": "tilt_switch_sw520d",
+        "name": "SW-520D Tilt Ball Switch",
+        "category": "sensor",
+        "description": "Mercury-free tilt sensor. Conductive ball bearing inside cylindrical housing completes circuit when tilted beyond ~45°. Acts as a digital switch for orientation, vibration, or motion detection.",
+        "pins": [
+            {"name": "pin_a", "type": "passive", "required": True, "notes": "Terminal A — connect to digital input pin with pull-up resistor."},
+            {"name": "pin_b", "type": "passive", "required": True, "notes": "Terminal B — connect to GND. Polarity-insensitive."}
+        ],
+        "power": {"voltage": 0.0, "current_mA": 0.0},
+        "constraints": [
+            {"type": "requires_pullup", "condition": "Tilt switch connected to digital input without pull-up, causing floating pin.", "resolution": "Use INPUT_PULLUP in code or add 10kΩ pull-up from input pin to VCC. Reads LOW when tilted (closed), HIGH when upright (open).", "auto_fixable": False, "severity": "warning"}
+        ],
+        "compatible_boards": ["arduino_uno"],
+        "tags": ["tilt", "sw520d", "switch", "orientation", "motion", "sensor"],
+        "_needs_review": False
+    },
+
+    # 19. 1N4007 Rectifier Diode
+    {
+        "id": "diode_1n4007",
+        "name": "1N4007 Rectifier Diode",
+        "category": "passive",
+        "description": "General-purpose silicon rectifier diode. 1A forward current, 1000V PIV, ~0.7V forward voltage drop. Used as flyback protection across inductive loads (relays, motors) and in rectifier circuits.",
+        "pins": [
+            {"name": "anode", "type": "digital_input", "voltage": 0.7, "required": True, "notes": "Positive terminal (no band). Current flows in during forward bias."},
+            {"name": "cathode", "type": "digital_output", "voltage": 0.7, "required": True, "notes": "Negative terminal (silver/white stripe). Current exits here."}
+        ],
+        "power": {"voltage": 0.7, "voltage_tolerance": [0.6, 1.1], "current_mA": 1000.0, "current_max_mA": 1000.0},
+        "constraints": [
+            {"type": "flyback_orientation", "condition": "Diode installed with wrong polarity for flyback protection on relay/motor.", "resolution": "For flyback protection: place anode toward GND, cathode toward VCC across the inductive load. Diode clamps reverse EMF spikes.", "auto_fixable": False, "severity": "warning"}
+        ],
+        "compatible_boards": ["arduino_uno"],
+        "tags": ["diode", "1n4007", "rectifier", "flyback", "protection", "passive"],
+        "_needs_review": False
+    },
+
+    # 20. PN2222 NPN Transistor
+    {
+        "id": "transistor_pn2222",
+        "name": "PN2222 NPN Transistor",
+        "category": "passive",
+        "description": "General-purpose NPN BJT in TO-92 package. 600mA collector current, 40V VCEO, hFE~100 at 10mA. Used as digital switch to drive loads beyond Arduino 20mA GPIO limit (relays, motors, buzzers). Requires base resistor.",
+        "pins": [
+            {"name": "emitter", "type": "ground", "voltage": 0.0, "required": True, "notes": "Emitter — connect to GND. Leftmost pin on flat-side-facing TO-92 package."},
+            {"name": "base", "type": "digital_input", "voltage": 5.0, "required": True, "notes": "Base — control input via 1kΩ resistor from Arduino GPIO. HIGH turns transistor ON."},
+            {"name": "collector", "type": "digital_output", "voltage": 5.0, "required": True, "notes": "Collector — connects to negative terminal of load. Load positive connects to VCC. Rightmost pin on flat-facing TO-92."}
+        ],
+        "power": {"voltage": 5.0, "voltage_tolerance": [0.0, 40.0], "current_mA": 100.0, "current_max_mA": 600.0},
+        "constraints": [
+            {"type": "requires_base_resistor", "condition": "Base connected directly to GPIO without current-limiting resistor.", "resolution": "Add 1kΩ in series with base. Limits base current to ~4mA at 5V, providing saturation drive for IC<100mA.", "auto_fixable": True, "fix_component_id": "resistor_1k", "severity": "danger"},
+            {"type": "flyback_protection", "condition": "Inductive load at collector without flyback diode.", "resolution": "Place 1N4007 diode across inductive load — cathode to VCC, anode to collector — to clamp back-EMF spikes.", "auto_fixable": True, "fix_component_id": "diode_1n4007", "severity": "danger"}
+        ],
+        "compatible_boards": ["arduino_uno"],
+        "tags": ["transistor", "pn2222", "npn", "bjt", "switch", "driver", "passive"],
+        "_needs_review": False
+    },
+
+    # 21. Passive Buzzer
+    {
+        "id": "buzzer_passive",
+        "name": "Passive Buzzer",
+        "category": "output",
+        "description": "Passive piezoelectric buzzer with no internal oscillator. Requires external PWM square wave to produce sound. Frequency determines pitch. Use Arduino tone() function on a PWM pin. Range: 1kHz-5kHz typical.",
+        "pins": [
+            {"name": "positive", "type": "digital_input", "voltage": 5.0, "required": True, "notes": "Positive terminal (+). Connect to PWM-capable pin (D3/D5/D6/D9/D10/D11). Use tone(pin, freq)."},
+            {"name": "negative", "type": "ground", "voltage": 0.0, "required": True, "notes": "Negative terminal. Connect to GND."}
+        ],
+        "power": {"voltage": 5.0, "voltage_tolerance": [3.0, 5.5], "current_mA": 20.0, "current_max_mA": 30.0},
+        "constraints": [
+            {"type": "requires_pwm_pin", "condition": "Passive buzzer connected to non-PWM digital pin.", "resolution": "Connect to PWM pin (D3/D5/D6/D9/D10/D11) and use tone(pin, frequency). A plain HIGH/LOW produces no sound.", "auto_fixable": False, "severity": "warning"}
+        ],
+        "compatible_boards": ["arduino_uno"],
+        "tags": ["buzzer", "passive", "piezo", "sound", "audio", "pwm", "tone"],
+        "_needs_review": False
+    },
+
+    # 22. 3-6V DC Toy Motor
+    {
+        "id": "dc_motor_toy",
+        "name": "3-6V DC Toy Motor",
+        "category": "actuator",
+        "description": "Small brushed DC motor (130-size, RE-130 equivalent). 3V-6V operating range. No-load ~70mA at 3V, stall up to 800mA. ~8000-15000 RPM no-load. Cannot drive from GPIO directly — needs transistor or motor driver IC.",
+        "pins": [
+            {"name": "terminal_positive", "type": "power", "voltage": 5.0, "required": True, "notes": "Motor + terminal. Connect to collector of PN2222 or motor driver output. Swap polarity to reverse direction."},
+            {"name": "terminal_negative", "type": "ground", "voltage": 0.0, "required": True, "notes": "Motor - terminal. Connect to GND."}
+        ],
+        "power": {"voltage": 5.0, "voltage_tolerance": [3.0, 6.0], "current_mA": 70.0, "current_max_mA": 800.0},
+        "constraints": [
+            {"type": "max_current_exceeded", "condition": "DC motor connected directly to Arduino GPIO.", "resolution": "Drive via PN2222 transistor: GPIO → 1kΩ → Base, Collector → motor(-), motor(+) → 5V. Add 1N4007 flyback diode across motor terminals.", "auto_fixable": False, "severity": "danger"},
+            {"type": "flyback_protection", "condition": "Motor connected without flyback diode.", "resolution": "Place 1N4007 diode across motor terminals — cathode toward VCC, anode toward GND — to clamp back-EMF spikes.", "auto_fixable": True, "fix_component_id": "diode_1n4007", "severity": "danger"}
+        ],
+        "compatible_boards": ["arduino_uno"],
+        "tags": ["motor", "dc", "toy", "actuator", "fan", "brushed", "130"],
+        "_needs_review": False
+    },
+
+    # 23. Blue LED
+    {
+        "id": "led_blue",
+        "name": "Blue LED",
+        "category": "output",
+        "description": "Blue GaN LED. Forward voltage ~3.0V-3.4V (higher than red/green). Requires correctly sized resistor — smaller value than red/green due to higher Vf. Typical current 10mA-20mA.",
+        "pins": [
+            {"name": "anode", "type": "digital_input", "voltage": 3.2, "required": True, "notes": "Positive lead (longer leg). Connect through 180Ω resistor to GPIO or VCC."},
+            {"name": "cathode", "type": "ground", "voltage": 0.0, "required": True, "notes": "Negative lead (shorter leg, flat side). Connect to GND."}
+        ],
+        "power": {"voltage": 3.2, "voltage_tolerance": [3.0, 3.4], "current_mA": 10.0, "current_max_mA": 20.0},
+        "constraints": [
+            {"type": "requires_resistor", "condition": "Blue LED connected without series resistor from 5V supply.", "resolution": "Add 180Ω resistor in series: R = (5V - 3.2V) / 0.010A = 180Ω for 10mA. Use 100Ω for ~18mA.", "auto_fixable": False, "severity": "danger"}
+        ],
+        "compatible_boards": ["arduino_uno"],
+        "tags": ["led", "blue", "light", "indicator", "gan"],
+        "_needs_review": False
+    },
+
+    # 24. Yellow LED
+    {
+        "id": "led_yellow",
+        "name": "Yellow LED",
+        "category": "output",
+        "description": "Yellow AlInGaP LED. Forward voltage ~1.8V-2.2V, similar to red. Typical current 10mA-20mA. Use 220Ω series resistor at 5V. Common for status and warning indicators.",
+        "pins": [
+            {"name": "anode", "type": "digital_input", "voltage": 2.0, "required": True, "notes": "Positive lead (longer leg). Connect through 220Ω resistor to GPIO or VCC."},
+            {"name": "cathode", "type": "ground", "voltage": 0.0, "required": True, "notes": "Negative lead (shorter leg, flat side). Connect to GND."}
+        ],
+        "power": {"voltage": 2.0, "voltage_tolerance": [1.8, 2.2], "current_mA": 10.0, "current_max_mA": 20.0},
+        "constraints": [
+            {"type": "requires_resistor", "condition": "Yellow LED connected without series current-limiting resistor.", "resolution": "Add 220Ω resistor in series with anode at 5V: R = (5V - 2.0V) / 0.010A = 300Ω; 220Ω gives ~14mA.", "auto_fixable": True, "fix_component_id": "resistor_220", "severity": "danger"}
+        ],
+        "compatible_boards": ["arduino_uno"],
+        "tags": ["led", "yellow", "light", "indicator", "status"],
+        "_needs_review": False
+    },
+
+    # 25. RGB Common Cathode LED
+    {
+        "id": "led_rgb",
+        "name": "RGB Common Cathode LED",
+        "category": "output",
+        "description": "4-pin RGB LED, common cathode. Three LED dice (R/G/B) share one GND. Each channel driven individually with its own resistor. Mix PWM for any colour. Vf: Red~2.0V, Green~2.2V, Blue~3.2V.",
+        "pins": [
+            {"name": "red_anode", "type": "digital_input", "voltage": 2.0, "required": True, "notes": "Red channel anode. Through 220Ω to PWM GPIO. Longest leg on through-hole package."},
+            {"name": "common_cathode", "type": "ground", "voltage": 0.0, "required": True, "notes": "Common cathode (GND). Second-longest pin, next to red anode."},
+            {"name": "green_anode", "type": "digital_input", "voltage": 2.2, "required": True, "notes": "Green channel anode. Through 220Ω to PWM GPIO."},
+            {"name": "blue_anode", "type": "digital_input", "voltage": 3.2, "required": True, "notes": "Blue channel anode. Through 100Ω-180Ω to PWM GPIO (higher Vf = smaller resistor from 5V)."}
+        ],
+        "power": {"voltage": 3.2, "voltage_tolerance": [2.0, 3.4], "current_mA": 20.0, "current_max_mA": 60.0},
+        "constraints": [
+            {"type": "requires_resistor", "condition": "RGB channel connected without current-limiting resistor.", "resolution": "Each channel needs its own resistor: Red/Green → 220Ω, Blue → 180Ω at 5V. Never share one resistor — different Vf causes unequal brightness.", "auto_fixable": True, "fix_component_id": "resistor_220", "severity": "danger"},
+            {"type": "requires_pwm_for_colour_mixing", "condition": "RGB connected to non-PWM pins for colour mixing.", "resolution": "Connect R/G/B to PWM pins (D3/D5/D6/D9/D10/D11) and use analogWrite() for smooth blending.", "auto_fixable": False, "severity": "info"}
+        ],
+        "compatible_boards": ["arduino_uno"],
+        "tags": ["led", "rgb", "colour", "common-cathode", "pwm", "light"],
+        "_needs_review": False
+    },
+
+    # 26. 1-Digit 7-Segment LED Display
+    {
+        "id": "display_7seg_1dig",
+        "name": "1-Digit 7-Segment LED Display",
+        "category": "display",
+        "description": "Single-digit common cathode 7-segment display. Segments A-G + decimal point. Requires 8 GPIO pins + GND driven directly, or use 74HC595 to save pins. Vf ~2.0V per segment, 10mA-15mA each.",
+        "pins": [
+            {"name": "seg_a", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment A — top horizontal bar. Through 220Ω to GPIO."},
+            {"name": "seg_b", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment B — upper-right vertical bar."},
+            {"name": "seg_c", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment C — lower-right vertical bar."},
+            {"name": "seg_d", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment D — bottom horizontal bar."},
+            {"name": "seg_e", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment E — lower-left vertical bar."},
+            {"name": "seg_f", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment F — upper-left vertical bar."},
+            {"name": "seg_g", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment G — middle horizontal bar."},
+            {"name": "seg_dp", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Decimal point segment. Optional."},
+            {"name": "common_cathode_1", "type": "ground", "voltage": 0.0, "required": True, "notes": "Common cathode pin 1 (package pin 3). Connect to GND."},
+            {"name": "common_cathode_2", "type": "ground", "voltage": 0.0, "required": True, "notes": "Common cathode pin 2 (package pin 8). Connect to GND."}
+        ],
+        "power": {"voltage": 2.0, "voltage_tolerance": [1.8, 2.5], "current_mA": 80.0, "current_max_mA": 120.0},
+        "constraints": [
+            {"type": "requires_resistor", "condition": "Segment connected directly to 5V GPIO without resistor.", "resolution": "Add 220Ω in series with each segment anode: R = (5V - 2.0V) / 0.010A = 300Ω; 220Ω gives ~14mA per segment.", "auto_fixable": True, "fix_component_id": "resistor_220", "severity": "danger"},
+            {"type": "gpio_pin_count", "condition": "Driving 8 segments directly uses 8 GPIO pins.", "resolution": "Use 74HC595 shift register to drive all segments with only 3 SPI pins (DATA/CLOCK/LATCH). Still needs 220Ω per segment output.", "auto_fixable": False, "severity": "info"}
+        ],
+        "compatible_boards": ["arduino_uno"],
+        "tags": ["display", "7-segment", "led", "digit", "numeric", "common-cathode"],
+        "_needs_review": False
     }
 ]
 
