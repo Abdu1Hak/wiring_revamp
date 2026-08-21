@@ -180,7 +180,7 @@ def _extract_metadata_with_gemini(raw_text: str, component_id: str, r: redis.Red
     for attempt, wait_time in enumerate(backoffs):
         try: 
             response = client.models.generate_content(
-                model="gemini-3.6-flash",
+                model="gemini-3.5-flash-lite",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json"

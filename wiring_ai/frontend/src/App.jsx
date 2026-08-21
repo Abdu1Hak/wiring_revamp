@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import OnboardPanel from "./onboard.jsx";
+import ProjectPanel from "./project.jsx";
 import "./App.css";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -125,6 +126,12 @@ export default function App() {
             >
               ➕ Onboard Datasheet
             </button>
+            <button
+              className={`nav-tab ${activeTab === "project" ? "active" : ""}`}
+              onClick={() => setActiveTab("project")}
+            >
+              🛠️ Project Scope
+            </button>
           </div>
 
           <button className="refresh-btn" onClick={fetchComponents} title="Refetch catalog from database">
@@ -233,6 +240,15 @@ export default function App() {
                     // Optionally stay on onboard or show success notification
                   }}
                 />
+              </div>
+            </div>
+          )}
+
+          {/* ── PROJECT GENERATION TAB ── */}
+          {activeTab === "project" && (
+            <div className="onboard-view">
+              <div className="project-wrapper">
+                <ProjectPanel />
               </div>
             </div>
           )}

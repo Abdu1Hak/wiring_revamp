@@ -209,7 +209,7 @@ async def validate_datasheet_node(state: PreProcessState)-> PreProcessState:
     # -- Path A/B continued: Validate PDF bytes with Gemini -----------------
     try: 
         from rag.ingestor import extract_first_pages_for_validation
-        preview_text = extract_first_pages_for_validation(pdf_bytes, num_pages=1)
+        preview_text = extract_first_pages_for_validation(pdf_bytes, num_pages=3)
 
         if len(preview_text.strip()) < 100: 
             # Can't extract text — likely a scanned PDF (OCR should have caught it, but fallback)
@@ -229,7 +229,7 @@ async def validate_datasheet_node(state: PreProcessState)-> PreProcessState:
         for attempt in range(3):
             try:
                 response = model.models.generate_content(
-                    model="gemini-3.6-flash",
+                    model="gemini-3.5-flash-lite",
                     contents=prompt,
                     config=types.GenerateContentConfig(response_mime_type="application/json"),
                 )

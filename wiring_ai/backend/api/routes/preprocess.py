@@ -66,6 +66,7 @@ async def poll_celery_progress(job_id: str, queue: asyncio.Queue):
     last_progress = None
     try:
         for _ in range(360):  # max 3 minutes (360 × 500ms)
+            # pyrefly: ignore [not-async]
             job_data = await r.hgetall(f"job:{job_id}")
             if job_data:
                 step = job_data.get("step")
@@ -256,6 +257,7 @@ async def get_job_status(job_id: str):
     """Polling fallback for clients that can't use SSE."""
     r = aioredis.from_url(REDIS_URL, decode_responses=True)
     try:
+        # pyrefly: ignore [not-async]
         job_data = await r.hgetall(f"job:{job_id}")
         if not job_data:
             raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
