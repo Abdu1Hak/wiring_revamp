@@ -16,6 +16,7 @@ class PreProcessState(TypedDict):
     pdf_bytes: Optional[bytes]  # raw bytes from frontend upload
     pdf_base64: Optional[str]   # base64-encoded PDF for MCP tool call
     datasheet_url: Optional[str]  # URL if user typed one in
+    skip_validation: Optional[bool]  # True if user bypassed AI datasheet validation
 
     # ─── check_vector_db_node output ──────────────────────────────────────────
     already_indexed: bool        # skip all ingestion if True

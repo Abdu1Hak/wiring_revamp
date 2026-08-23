@@ -260,6 +260,12 @@ export default function App() {
         <ComponentDetailModal
           component={selectedComponent}
           onClose={() => setSelectedComponent(null)}
+          onUpdate={(updated) => {
+            setComponents((prev) =>
+              prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c))
+            );
+            setSelectedComponent((prev) => (prev ? { ...prev, ...updated } : prev));
+          }}
           onDelete={(e) => handleOpenDeleteModal(e, selectedComponent.id, selectedComponent.name)}
         />
       )}
@@ -342,9 +348,51 @@ function ComponentCard({ component, isSelected, onSelect, onDelete }) {
 }
 
 /* ─── COMPONENT DETAIL MODAL ────────────────────────────────────────── */
-function ComponentDetailModal({ component, onClose, onDelete }) {
+function ComponentDetailModal({ component, onClose, onUpdate, onDelete }) {
   const icon =
     CATEGORY_ICON[(component.category || "").toLowerCase()] || CATEGORY_ICON.default;
+
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState(component.name || "");
+  const [isSavingName, setIsSavingName] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+
+  useEffect(() => {
+    setNameInput(component.name || "");
+    setIsEditingName(false);
+    setSaveError(null);
+  }, [component.id, component.name]);
+
+  const handleSaveName = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const clean = nameInput.trim();
+    if (!clean) return;
+    if (clean === component.name) {
+      setIsEditingName(false);
+      return;
+    }
+
+    setIsSavingName(true);
+    setSaveError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/components/${component.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: clean }),
+      });
+      if (!res.ok) {
+        throw new Error(`Server error: ${res.status}`);
+      }
+      const updated = await res.json();
+      if (onUpdate) onUpdate(updated);
+      setIsEditingName(false);
+    } catch (err) {
+      console.error("Failed to update component name:", err);
+      setSaveError(err.message || "Failed to update name");
+    } finally {
+      setIsSavingName(false);
+    }
+  };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -352,8 +400,102 @@ function ComponentDetailModal({ component, onClose, onDelete }) {
         <header className="modal-header">
           <div className="modal-title-box">
             <span className="modal-icon">{icon}</span>
-            <div>
-              <h2>{component.name}</h2>
+            <div style={{ flex: 1 }}>
+              {isEditingName ? (
+                <form
+                  onSubmit={handleSaveName}
+                  style={{
+                    display: "flex",
+                    gap: "8px",
+                    alignItems: "center",
+                    marginBottom: "4px",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <input
+                    type="text"
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    autoFocus
+                    disabled={isSavingName}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid var(--accent)",
+                      background: "rgba(0, 0, 0, 0.4)",
+                      color: "#fff",
+                      fontSize: "16px",
+                      fontWeight: 700,
+                      outline: "none",
+                      flex: 1,
+                      minWidth: "220px",
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSavingName || !nameInput.trim()}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: "6px",
+                      background: "var(--accent)",
+                      color: "#fff",
+                      border: "none",
+                      fontWeight: 700,
+                      fontSize: "12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {isSavingName ? "Saving..." : "✓ Save"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNameInput(component.name || "");
+                      setIsEditingName(false);
+                    }}
+                    disabled={isSavingName}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: "6px",
+                      background: "transparent",
+                      border: "1px solid var(--border)",
+                      color: "var(--text-secondary)",
+                      fontSize: "12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    ✕
+                  </button>
+                </form>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <h2 style={{ margin: 0 }}>{component.name}</h2>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingName(true)}
+                    title="Rename component"
+                    style={{
+                      background: "rgba(255, 255, 255, 0.08)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "6px",
+                      padding: "3px 8px",
+                      color: "var(--accent-2)",
+                      fontSize: "12px",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                    }}
+                  >
+                    ✏️ Rename
+                  </button>
+                </div>
+              )}
+              {saveError && (
+                <span style={{ color: "#ef4444", fontSize: "11px", display: "block", marginTop: "2px" }}>
+                  {saveError}
+                </span>
+              )}
               <span className="modal-sub">ID: {component.id} · Category: {component.category}</span>
             </div>
           </div>

@@ -36,7 +36,9 @@ router = APIRouter(prefix="/api/generate", tags=["generation"])
 # ─── Request Models ───────────────────────────────────────────────────────────
 class StartRequest(BaseModel):
     session_id: str
-    component_ids: list[str]
+    component_quantities: dict[str, int]
+    component_configs: Optional[dict[str, dict]] = None
+    board_categories: Optional[list[dict]] = None
     project_scope: str
     revision_context: Optional[str] = None
 
@@ -88,6 +90,14 @@ async def _stream_graph_events(graph_input, config: RunnableConfig):
                 "status":  node_state.get("status", ""),
                 "message": NODE_MESSAGES.get(node_name, node_name),
             })
+            logger.info(
+                {
+                "type":    "node",
+                "node":    node_name,
+                "status":  node_state.get("status", ""),
+                "message": NODE_MESSAGES.get(node_name, node_name),
+            }
+            )
 
             if node_state.get("status") == "complete": 
                 yield sse({
@@ -115,14 +125,19 @@ async def start_generation(request: StartRequest):
     """
     initial_state: Generation = {
         "session_id":             request.session_id,
-        "component_ids":          request.component_ids,
+        "component_quantities":    request.component_quantities,
+        "component_configs":       request.component_configs or {},
+        "board_categories":        request.board_categories,
         "project_scope":          request.project_scope,
         "revision_context":       request.revision_context,
         "existing_project_id":    None,
         "is_cached":              False,
         "role_assignments":       {},
+        "categorized_roles":       [],
         "missing_roles":          [],
         "unassigned_components":  [],
+        "quantity_adjustments":   [],
+        "voltage_adjustments":    [],
         "enriched_scope":         "",
         "is_aligned":             False,
         "hitl_status":            "pending",

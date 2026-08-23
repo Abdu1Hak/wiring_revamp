@@ -103,6 +103,7 @@ export default function OnboardPanel({ onComponentAdded }) {
   const [componentName, setComponentName] = useState("");
   const [datasheetUrl, setDatasheetUrl] = useState("");
   const [pdfFile, setPdfFile] = useState(null);
+  const [skipValidation, setSkipValidation] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [events, setEvents] = useState([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -135,7 +136,7 @@ export default function OnboardPanel({ onComponentAdded }) {
       alert("Component ID and name are required.");
       return;
     }
-    if (!pdfFile && !datasheetUrl.trim()) {
+    if (!pdfFile && !datasheetUrl.trim() && !skipValidation) {
       alert("Please provide a datasheet PDF or URL.");
       return;
     }
@@ -148,6 +149,7 @@ export default function OnboardPanel({ onComponentAdded }) {
     const formData = new FormData();
     formData.append("component_id", componentId.trim().toLowerCase().replace(/\s+/g, "_"));
     formData.append("component_name", componentName.trim());
+    formData.append("skip_validation", skipValidation ? "true" : "false");
     if (datasheetUrl.trim()) formData.append("datasheet_url", datasheetUrl.trim());
     if (pdfFile) formData.append("datasheet_file", pdfFile);
 
@@ -286,6 +288,20 @@ export default function OnboardPanel({ onComponentAdded }) {
           }
         </div>
 
+        {/* Bypass / Skip Validation Option (For Scribd or direct web docs) */}
+        <label style={styles.checkboxRow}>
+          <input
+            type="checkbox"
+            checked={skipValidation}
+            onChange={e => setSkipValidation(e.target.checked)}
+            disabled={isStreaming}
+            style={styles.checkbox}
+          />
+          <span style={styles.checkboxLabel}>
+            ⚡ <strong>Bypass AI Datasheet Validation</strong> (Direct ingest for Scribd links, web docs, or unverified files)
+          </span>
+        </label>
+
         <button
           style={{ ...styles.button, ...(isStreaming ? styles.buttonDisabled : {}) }}
           onClick={handleSubmit}
@@ -365,6 +381,27 @@ const styles = {
     transition: "all 0.2s ease", background: "var(--bg-card)"
   },
   dropZoneActive: { borderColor: "var(--accent)", background: "rgba(99, 102, 241, 0.1)", color: "var(--accent-2)" },
+  checkboxRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: "10px 14px",
+    borderRadius: "var(--radius-md)",
+    background: "rgba(255, 255, 255, 0.03)",
+    border: "1px solid var(--border)",
+    cursor: "pointer",
+  },
+  checkbox: {
+    width: "16px",
+    height: "16px",
+    cursor: "pointer",
+    accentColor: "var(--accent)",
+  },
+  checkboxLabel: {
+    fontSize: "12px",
+    color: "var(--text-secondary)",
+    lineHeight: 1.4,
+  },
   button: {
     padding: "14px", borderRadius: "var(--radius-md)", background: "var(--accent)",
     color: "#fff", fontWeight: 700, fontSize: "15px", border: "none",

@@ -5,7 +5,9 @@ class Generation(TypedDict):
     # Inputs (set by fastapi before langgraph)
     session_id: str 
     project_scope: str 
-    component_ids: list[str]
+    component_quantities: dict[str, int]
+    component_configs: Optional[dict[str, dict]]
+    board_categories: Optional[list[dict]]
     revision_context: Optional[str]
 
     # Node 1: project_exist() 
@@ -15,9 +17,12 @@ class Generation(TypedDict):
 
     # Node 2: Query Optimization
     role_assignments: dict
+    categorized_roles: Optional[list[dict]]
 
     missing_roles: list[dict]       
-    unassigned_components: list[dict]  
+    unassigned_components: list[dict]
+    quantity_adjustments: list[dict]
+    voltage_adjustments: list[dict]
     enriched_scope: str              
     is_aligned: bool              
 

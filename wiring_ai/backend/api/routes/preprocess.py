@@ -162,6 +162,7 @@ async def onboard_component(
     component_name: str = Form(...),
     datasheet_url: Optional[str] = Form(None),
     datasheet_file: Optional[UploadFile] = File(None),
+    skip_validation: Optional[bool] = Form(False),
 ):
     """
     Start the pre-processing pipeline for a new component.
@@ -171,6 +172,7 @@ async def onboard_component(
     - component_name: display name (e.g., "DHT22 Temperature Sensor")
     - datasheet_url: optional URL to datasheet
     - datasheet_file: optional PDF file upload
+    - skip_validation: optional boolean to bypass AI validation and web search
     """
     # Read PDF bytes if uploaded
     pdf_bytes: Optional[bytes] = None
@@ -186,6 +188,7 @@ async def onboard_component(
         "pdf_bytes": pdf_bytes,
         "pdf_base64": None,
         "datasheet_url": datasheet_url,
+        "skip_validation": bool(skip_validation),
         "already_indexed": False,
         "datasheet_valid": False,
         "needs_web_search": False,

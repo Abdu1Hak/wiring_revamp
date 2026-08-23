@@ -16,6 +16,8 @@ import json
 import logging
 import os
 from typing import Optional
+import dotenv
+dotenv.load_dotenv()
 import redis.asyncio as aioredis
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
@@ -147,6 +149,16 @@ async def validate_datasheet_node(state: PreProcessState)-> PreProcessState:
     pdf_bytes: Optional[bytes] = state.get("pdf_bytes")
     datasheet_url: Optional[str] = state.get("datasheet_url")
 
+    # ── User Bypass / Skip Validation Check ──────────────────────────────
+    if state.get("skip_validation"):
+        logger.info(f"[NODE:validate_datasheet] Bypassing AI validation (skip_validation=True)")
+        state["datasheet_valid"] = True
+        state["needs_web_search"] = False
+        state["validation_message"] = "✓ AI Validation bypassed — proceeding directly to ingestion..."
+        if pdf_bytes:
+            state["pdf_base64"] = base64.b64encode(pdf_bytes).decode("utf-8")
+        return state
+
     # -- Path B: URL provided but no file uploaded → download PDF from URL --
     if not pdf_bytes and datasheet_url:
         logger.info(f"[NODE:validate_datasheet] URL provided — downloading: {datasheet_url}")
@@ -165,7 +177,7 @@ async def validate_datasheet_node(state: PreProcessState)-> PreProcessState:
                 "Accept-Language": "en-US,en;q=0.9",
                 "Referer": "https://www.google.com/",
             }
-            async with httpx.AsyncClient(follow_redirects=True, timeout=30, headers=headers) as client:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=15, headers=headers) as client:
                 response = await client.get(datasheet_url)
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "").lower()
@@ -182,25 +194,35 @@ async def validate_datasheet_node(state: PreProcessState)-> PreProcessState:
                     pdf_bytes = response.content
                     logger.info(f"[NODE:validate_datasheet] Downloaded PDF from URL: {len(pdf_bytes)} bytes")
                 else:
-                    # Returned HTML — try Playwright to find embedded PDF link
+                    # Returned HTML or Scribd/doc page — try Playwright
                     logger.warning(
                         f"[NODE:validate_datasheet] URL returned non-PDF "
-                        f"(content-type: {content_type}) — trying Playwright"
+                        f"(content-type: {content_type}) — trying Playwright extraction"
                     )
                     from rag.ingestor import fetch_url_with_playwright
                     pdf_bytes = await fetch_url_with_playwright(datasheet_url)
-                    logger.info(f"[NODE:validate_datasheet] Playwright fetched PDF: {len(pdf_bytes)} bytes")
+                    if pdf_bytes:
+                        logger.info(f"[NODE:validate_datasheet] Playwright fetched PDF: {len(pdf_bytes)} bytes")
         except Exception as e:
-            logger.warning(f"[NODE:validate_datasheet] Failed to download URL '{datasheet_url}': {e} — falling back to web search")
-            state["needs_web_search"] = True
-            state["validation_message"] = (
-                f"Could not download datasheet from provided URL — "
-                f"searching web for '{state['component_name']}'..."
-            )
-            return state
+            logger.warning(f"[NODE:validate_datasheet] Direct download failed for '{datasheet_url}': {e}")
+            # If user provided a document URL (like Scribd), proceed with URL instead of failing to web search
+            if datasheet_url:
+                logger.info(f"[NODE:validate_datasheet] Using provided URL directly for ingestion: {datasheet_url}")
+                state["datasheet_valid"] = True
+                state["needs_web_search"] = False
+                state["validation_message"] = f"✓ Using provided document source: {datasheet_url[:55]}..."
+                return state
+
+    # If user provided an explicit URL and no raw PDF bytes were obtained:
+    if datasheet_url and not pdf_bytes:
+        logger.info(f"[NODE:validate_datasheet] Proceeding with provided URL source: {datasheet_url}")
+        state["datasheet_valid"] = True
+        state["needs_web_search"] = False
+        state["validation_message"] = f"✓ Document source registered: {datasheet_url[:55]}..."
+        return state
 
     # -- Path C: Nothing provided → trigger Tavily web search ---------------
-    if not pdf_bytes:
+    if not pdf_bytes and not datasheet_url:
         logger.info("[NODE:validate_datasheet] No PDF or URL provided — triggering web search")
         state["needs_web_search"] = True
         state["validation_message"] = f"No datasheet provided. Searching the web for '{state['component_name']}'..."
@@ -209,6 +231,7 @@ async def validate_datasheet_node(state: PreProcessState)-> PreProcessState:
     # -- Path A/B continued: Validate PDF bytes with Gemini -----------------
     try: 
         from rag.ingestor import extract_first_pages_for_validation
+        # pyrefly: ignore [bad-argument-type]
         preview_text = extract_first_pages_for_validation(pdf_bytes, num_pages=3)
 
         if len(preview_text.strip()) < 100: 
@@ -268,6 +291,7 @@ async def validate_datasheet_node(state: PreProcessState)-> PreProcessState:
                 f"(confidence: {confidence:.0%}) — Initiating Onboarding..."
             )
             # Pre-encode bytes to base64 for MCP tool (JSON-serializable)
+            # pyrefly: ignore [bad-argument-type]
             state["pdf_base64"] = base64.b64encode(pdf_bytes).decode("utf-8")
         else: 
             logger.info(f"[NODE:validate_datasheet] ✗ Not a datasheet | reason={reason}")
@@ -292,7 +316,7 @@ async def validate_datasheet_node(state: PreProcessState)-> PreProcessState:
 async def web_search_node(state: PreProcessState) -> PreProcessState: 
     """
     Uses Tavily API for structured results with PDF links 
-    Downloads the first viable pdf and encodes to base64 for MCP tool
+    Downloads the first viable pdf with browser headers and encodes to base64 for MCP tool
     """
     component_name = state["component_name"]
     logger.info(f"[NODE:web_search] Searching web for '{component_name}' datasheet")
@@ -303,7 +327,6 @@ async def web_search_node(state: PreProcessState) -> PreProcessState:
         import httpx
         tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY", ""))
         query = f"{component_name} datasheet filetype:pdf electrical specifications"
-        # list of dicts (i think) containing search results
         results = tavily.search(
             query=query,
             search_depth="advanced",
@@ -311,37 +334,56 @@ async def web_search_node(state: PreProcessState) -> PreProcessState:
             include_raw_content=False,
         )
 
-        # Find a URL that looks like a PDF
-        pdf_url = None
-        for result in results.get("results", []):
-            url = result.get("url", "")
-            if ".pdf" in url.lower() or "datasheet" in url.lower():
-                pdf_url = url
-                break
-        
-        if not pdf_url and results.get("results"):
-            # take the first results URL as fall back 
-            pdf_url = results["results"][0].get("url")
-        
-        if not pdf_url: 
-            raise ValueError("No PDF URL found in search results")
-        
-        logger.info(f"[NODE:web_search] Found candidate URL: {pdf_url}")
-        state["found_datasheet_url"] = pdf_url
+        all_results = results.get("results", [])
+        if not all_results:
+            raise ValueError(f"No search results returned for '{component_name}'")
 
-        # Attempt PDF download
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            response = await client.get(pdf_url)
-            response.raise_for_status()
-            pdf_bytes = response.content
-        
-        state["pdf_base64"] = base64.b64encode(pdf_bytes).decode("utf-8")
-        state["datasheet_url"] = pdf_url
-        state["validation_message"] = (
-            f"✓ Found datasheet via web search: {pdf_url[:60]}... — Initiating Onboarding..."
-        )
-        logger.info(f"[NODE:web_search] Downloaded {len(pdf_bytes)} bytes from {pdf_url}")
-    
+        # Prioritize direct .pdf links first
+        candidate_urls = []
+        for res in all_results:
+            url = res.get("url", "")
+            if not url:
+                continue
+            if url.lower().endswith(".pdf") or ".pdf" in url.lower():
+                candidate_urls.insert(0, url)
+            else:
+                candidate_urls.append(url)
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "application/pdf,application/octet-stream,*/*",
+        }
+
+        pdf_bytes = None
+        selected_url = candidate_urls[0]
+
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0, headers=headers) as client:
+            for candidate in candidate_urls:
+                try:
+                    logger.info(f"[NODE:web_search] Attempting download from: {candidate}")
+                    response = await client.get(candidate)
+                    if response.status_code == 200 and len(response.content) > 500:
+                        pdf_bytes = response.content
+                        selected_url = candidate
+                        logger.info(f"[NODE:web_search] Successfully downloaded {len(pdf_bytes)} bytes from {candidate}")
+                        break
+                except Exception as dl_err:
+                    logger.warning(f"[NODE:web_search] Download attempt failed for {candidate}: {dl_err}")
+                    continue
+
+        state["found_datasheet_url"] = selected_url
+        state["datasheet_url"] = selected_url
+
+        if pdf_bytes:
+            state["pdf_base64"] = base64.b64encode(pdf_bytes).decode("utf-8")
+            state["validation_message"] = (
+                f"✓ Downloaded datasheet via web search ({selected_url[:50]}...) — Initiating Onboarding..."
+            )
+        else:
+            state["validation_message"] = (
+                f"✓ Found datasheet source ({selected_url[:50]}...) — Dispatching Ingestion..."
+            )
+
     except Exception as e: 
         logger.error(f"[NODE:web_search] Web search failed: {e}")
         state["status"] = "failed"
@@ -429,12 +471,20 @@ async def poll_and_finalize_node(state: PreProcessState) -> PreProcessState:
         return state
     
     logger.info(f"[NODE:finalize] Polling Redis for job {job_id}")
-    r = aioredis.from_url(REDIS_URL, decode_responses=True)
+    redis_url = os.getenv("REDIS_URL", REDIS_URL)
+    r = aioredis.from_url(redis_url, decode_responses=True)
 
     try:
         for _ in range(180):  # poll for up to 3 minutes
-            job_data = await r.hgetall(f"job:{job_id}")
-            # retreive job data, if nothing chill for one second 
+            try:
+                # pyrefly: ignore [not-async]
+                job_data = await r.hgetall(f"job:{job_id}")
+            except Exception as poll_err:
+                logger.warning(f"[NODE:finalize] Redis poll error: {poll_err}")
+                await asyncio.sleep(1)
+                continue
+
+            # retrieve job data, if nothing chill for one second 
             if not job_data:
                 await asyncio.sleep(1)
                 continue
@@ -448,11 +498,15 @@ async def poll_and_finalize_node(state: PreProcessState) -> PreProcessState:
                 state["validation_message"] = "✓ Component successfully onboarded to catalog!"
                 
                 # Cache the indexed status in Redis
-                await r.set(
-                    f"component:{state['component_id']}:indexed",
-                    "true",
-                    ex=86400
-                )
+                try:
+                    # pyrefly: ignore [not-async]
+                    await r.set(
+                        f"component:{state['component_id']}:indexed",
+                        "true",
+                        ex=86400
+                    )
+                except Exception:
+                    pass
                 logger.info(f"[NODE:finalize] ✓ Job {job_id} complete")
                 break
 
@@ -467,6 +521,11 @@ async def poll_and_finalize_node(state: PreProcessState) -> PreProcessState:
             state["status"] = "failed"
             state["error"] = "Ingestion timed out after 3 minutes"
             logger.error(f"[NODE:finalize] Timeout waiting for job {job_id}")
+    except Exception as e:
+        logger.error(f"[NODE:finalize] Unexpected error: {e}")
+        state["status"] = "failed"
+        state["error"] = f"Redis polling error: {e}"
     finally:
+        # pyrefly: ignore [not-async]
         await r.aclose()
     return state

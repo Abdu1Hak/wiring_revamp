@@ -211,6 +211,7 @@ async def delete_component_by_id(component_id:str) -> bool:
             {"id": norm_id}
         )
         await session.commit()
+        # pyrefly: ignore [missing-attribute]
         deleted_count = result.rowcount or 0 
 
 
@@ -236,7 +237,31 @@ async def delete_component_by_id(component_id:str) -> bool:
     return deleted_count > 0 
 
 
-        
-        
+async def update_component_name(component_id: str, new_name: str) -> dict | None:
+    """
+    Updates the display name of a component in the PostgreSQL database.
+    """
+    if not component_id or not new_name or not new_name.strip():
+        return None
 
-        
+    norm_id = component_id.strip()
+    clean_name = new_name.strip()
+
+    async with AsyncSessionLocal() as session:
+        query = (
+            components_table.update()
+            .where(
+                or_(
+                    func.lower(components_table.c.id) == norm_id.lower(),
+                    components_table.c.id == norm_id,
+                )
+            )
+            .values(name=clean_name)
+            .returning(components_table)
+        )
+        result = await session.execute(query)
+        await session.commit()
+        row = result.mappings().first()
+        if row:
+            return _parse_component(dict(row))
+        return None
