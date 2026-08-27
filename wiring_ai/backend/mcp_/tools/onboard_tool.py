@@ -67,8 +67,8 @@ async def onboard_component_datasheet(
         },
         task_id=job_id,  # use our job_id as Celery task ID for easy lookup
     )
-    logger.info(f"[MCP:ONBOARD] Dispatched Celery task {task.id} for {component_id}")
+    logger.info(f"[MCP:ONBOARD] Dispatched Celery task {job_id} for {component_id}")
 
-    return {"job_id": task.id, "celery_task_id": task.id, "status": "queued"} 
+    return {"job_id": job_id, "celery_task_id": task.id, "status": "queued"} 
 
  

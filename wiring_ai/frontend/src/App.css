@@ -380,6 +380,38 @@ body::after {
   overflow: hidden;
 }
 
+/* WARNING BANNER FOR MISSING FIELDS */
+.warning-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+.warning-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.warning-text {
+  color: var(--accent-amber);
+  font-weight: 500;
+}
+
+.comp-card.has-warnings {
+  border-color: rgba(245, 158, 11, 0.4);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.08);
+}
+
+.comp-card.has-warnings:hover {
+  border-color: rgba(245, 158, 11, 0.6);
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.15);
+}
+
 /* SPEC BADGES */
 .spec-row {
   display: flex;

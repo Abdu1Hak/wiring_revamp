@@ -28,7 +28,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 
 from .state import Generation 
-from .nodes import query_optimization 
+from .nodes import query_optimization, pre_compatibility 
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
@@ -50,13 +50,13 @@ def build_generation_graph(checkpointer=None):
     g = StateGraph(Generation)
     
     # register nodes 
-    # g.add_node("project_exist", project_exist)
     g.add_node("query_optimization", query_optimization)
+    g.add_node("pre_compatibility", pre_compatibility)
 
-    # set entry point 
+    # set entry point and sequential edges
     g.set_entry_point("query_optimization")
-
-    # conditional edges 
+    g.add_edge("query_optimization", "pre_compatibility")
+    g.add_edge("pre_compatibility", END)
 
     return g.compile(checkpointer=checkpointer) 
 

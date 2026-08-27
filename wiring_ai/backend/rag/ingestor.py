@@ -82,6 +82,7 @@ def _ocr_page(page: fitz.Page) -> str:
         img = Image.open(io.BytesIO(pix.tobytes("png")))
 
         # Run Tesseract — lang=eng, PSM 3 (fully automatic page segmentation)
+        # pyrefly: ignore [bad-assignment]
         ocr_text: str = pytesseract.image_to_string(img, lang="eng", config="--psm 3", output_type=pytesseract.Output.STRING)
         return ocr_text.strip()
     except Exception as e:
@@ -125,6 +126,7 @@ def _extract_page(page: fitz.Page, page_num: int) -> str:
     Returns combined page text with page header.
     """
     # Layer 1: digital text
+    # pyrefly: ignore [missing-attribute]
     digital_text = (page.get_text("text") or "").strip()
 
     # Decide whether to run OCR

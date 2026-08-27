@@ -98,13 +98,14 @@ def _publish_progress(r: redis.Redis, job_id: str, step: str, message: str, prog
         "status": "running",
         "updated_at": datetime.now(timezone.utc).isoformat(), 
     })
-    r.expire(f"job:{job_id}", 3600) # 1 hour
-    logger.info(f"[Celery: {job_id}] {progress}% - {message}")
+    r.expire(f"job:{job_id}", 3600)  # 1 hour TTL
+
+
 
 def _publish_complete(r: redis.Redis, job_id: str, metadata: dict):
     r.hset(f"job:{job_id}", mapping={
         "step": "complete",
-        "message": "Component successfully onboarded",
+        "message": "✓ Component onboarding complete!",
         "progress": "100",
         "status": "complete",
         "metadata": json.dumps(metadata),
@@ -128,7 +129,7 @@ def _publish_failed(r: redis.Redis, job_id: str, error: str):
 # ─── Metadata Extraction via Gemini ──────────────────────────────────────────
 
 METADATA_PROMPT = """\
-You are a hardware engineering assistant. Extract structured metadata from this datasheet.
+You are an expert hardware engineer. Extract structured electrical and pinout metadata from this component datasheet.
 Return ONLY valid JSON matching this exact schema:
 {{
   "name": "Full component display name",
@@ -138,38 +139,86 @@ Return ONLY valid JSON matching this exact schema:
     {{
       "name": "VCC",
       "type": "power",
-      "description": "3.3V or 5V supply"
+      "voltage": 5.0,
+      "required": true,
+      "notes": "3.3V or 5V supply"
     }},
     {{
       "name": "DATA",
       "type": "digital",
-      "description": "1-Wire data signal"
+      "voltage": 5.0,
+      "required": true,
+      "notes": "1-Wire data signal"
     }}
   ],
+  "interface": {{
+    "protocol": "one of: gpio | i2c | spi | uart | onewire | analog | passive | sub_peripheral",
+    "i2c_address": "e.g. 0x27 or null"
+  }},
   "power": {{
-    "operating_voltage": "3.3-5V",
-    "current_mA": 2.5
+    "logic_voltage": 5.0,
+    "voltage_range": [3.3, 5.0],
+    "operating_current_mA": 2.5,
+    "is_external_powered": false
   }},
   "constraints": [
     {{
       "type": "requires_pullup",
-      "description": "4.7kΩ pull-up resistor required on DATA pin"
+      "condition": "4.7kΩ pull-up resistor required on DATA pin",
+      "resolution": "Add a 4.7kΩ pull-up resistor between VCC and DATA",
+      "auto_fixable": false,
+      "fix_component_id": null,
+      "severity": "warning"
     }}
   ],
   "tags": ["temperature", "humidity", "1-Wire", "sensor"],
   "datasheet_summary": "2-3 sentence technical summary covering key specs, pin roles, and common use cases.",
-  "compatible_boards": []
+  "compatible_boards": [],
+
+  "operating_voltage": null,
+  "input_voltage_range": null,
+  "max_current_per_pin_mA": null,
+  "max_5v_rail_mA": null,
+  "max_3v3_rail_mA": null,
+  "total_digital_pins": null,
+  "total_analog_pins": null,
+  "total_pwm_pins": null,
+  "has_wifi": false,
+  "has_bluetooth": false,
+  "board_pins": null
 }}
 Rules:
-- `pins`: list every pin found in the datasheet with its pin number and exact functional role (e.g. "Pin 1 (Anode E)", "Pin 6 (Digit 4 Common Cathode)"). Do NOT list generic names like "Pin 1" or "1". `type` is one of: power | digital | analog | pwm | i2c | spi | uart | ground
-- `power`: extract operating voltage range or Forward Voltage Vf as a string (e.g. "2.05-2.6V" or "3.3-5V") and max/typical DC current draw in mA (e.g. 25)
-- `constraints`: ONLY include if the datasheet explicitly mentions a requirement (pull-up, current-limiting resistor, decoupling cap, etc.)
-- `tags`: 3-6 relevant keywords
-- `compatible_boards`: leave as empty list — unknown from datasheet alone
-- For microcontrollers/boards: add a "board_info" key with total_digital_pins, total_analog_pins, total_pwm_pins, has_wifi, has_bluetooth
+- `pins`: list every pin found with its exact name and functional role. `type` MUST be one of: power | ground | digital | analog | pwm | i2c | spi | uart | onewire | passive.
+  - Use `"pwm"` for pins that require hardware timer signals (servo control, buzzer tone, PWM LED channels).
+  - Use `"digital"` for standard GPIO input/output pins.
+  - Use `"analog"` for ADC input or DAC output pins.
+  - Use `"passive"` for pins on resistors, diodes, capacitors, switches (no active logic).
+  - `required`: true if pin must be connected for basic operation, false if optional.
+  - `notes`: brief wiring note (pull-up needed, max voltage, polarity, etc.)
+- `interface.protocol`:
+  - "i2c" — uses SDA/SCL bus. Extract default 7-bit hex i2c_address (e.g. "0x27") if found in datasheet, else null.
+  - "spi" — uses MOSI/MISO/SCK/CS.
+  - "onewire" — uses Dallas 1-Wire or single-bus protocol (e.g. DS18B20, DHT11).
+  - "analog" — purely analog sensor/input with no digital communication lines.
+  - "passive" — resistor, diode, capacitor, switch, or transistor (no MCU protocol).
+  - "sub_peripheral" — motor, pump, solenoid, or fan that connects via a driver IC or relay, NOT directly to MCU.
+  - "gpio" — standard digital modules and sensors driven directly by MCU GPIO.
+- `power`:
+  - `logic_voltage`: 3.3 or 5.0 (the digital logic level it communicates at). Set to null for passives and sub_peripherals.
+  - `voltage_range`: [min_voltage, max_voltage] numbers, e.g. [3.0, 5.5].
+  - `operating_current_mA`: typical or max operating current draw in mA (number, e.g. 15.0).
+  - `is_external_powered`: true for high-current loads (motors, heating elements, solenoids, relays, servos) that require an external battery/power supply; false for low-power sensors/logic modules powered from MCU 5V rail.
+- `constraints`: include explicit circuit requirements (pull-up resistors, series resistors, flyback diodes, decoupling caps).
+- `tags`: 3-6 relevant lowercase keywords.
+- `Microcontroller / Board specific fields`:
+  - IF AND ONLY IF `category` is "microcontroller" or "board":
+    - Extract `operating_voltage` (e.g. 5.0 or 3.3), `input_voltage_range` (e.g. [7.0, 12.0]), `max_current_per_pin_mA` (e.g. 40.0), `max_5v_rail_mA` (e.g. 500.0), `max_3v3_rail_mA` (e.g. 150.0), `total_digital_pins` (e.g. 14), `total_analog_pins` (e.g. 6), `total_pwm_pins` (e.g. 6), `has_wifi`, `has_bluetooth`.
+    - Extract `board_pins`: array of objects `[{"pin_id": "D0", "label": "0", "capabilities": ["digital", "uart_rx"], "voltage": 5.0, "max_current_mA": 40.0, "reserved": true, "reserved_reason": "USB Serial RX"}, ...]`.
+  - For all other categories (sensors, actuators, passives, displays), leave all board fields as null.
 Datasheet text:
 {text}
 """
+
 # pyrefly: ignore [bad-function-definition]
 def _extract_metadata_with_gemini(raw_text: str, component_id: str, r: redis.Redis = None, job_id: str = None) -> dict: 
     """ Use Gemini to extract metadata from datasheet text """
@@ -277,46 +326,38 @@ def ingest_datasheet_task(self, component_id:str, job_id: str, pdf_path:str|None
         # Prepare clean parameters for INSERT into components table
         id_val = metadata.get("id") or metadata.get("component_id") or component_id
 
-        voltage_min = metadata.get("voltage_min")
-        voltage_max = metadata.get("voltage_max")
-        if voltage_min is None and "power" in metadata and isinstance(metadata["power"], dict):
-            v_str = str(metadata["power"].get("operating_voltage", ""))
-            import re
-            nums = [float(n) for n in re.findall(r"\d+\.?\d*", v_str)]
-            if len(nums) >= 2:
-                voltage_min, voltage_max = nums[0], nums[1]
-            elif len(nums) == 1:
-                voltage_min, voltage_max = nums[0], nums[0]
+        # Format power and interface cleanly
+        power_dict = metadata.get("power", {})
+        interface_dict = metadata.get("interface", {})
+        category = metadata.get("category") or "other"
 
-        current_mA = metadata.get("current_mA")
-        if current_mA is None and "power" in metadata and isinstance(metadata["power"], dict):
-            current_mA = metadata["power"].get("current_mA")
-
-        pin_count = metadata.get("pin_count")
-        if pin_count is None and "pins" in metadata and isinstance(metadata["pins"], list):
-            pin_count = len(metadata["pins"])
-
-        requires_resistor = metadata.get("requires_resistor", False)
-        requires_pullup = metadata.get("requires_pullup", False)
-        if "constraints" in metadata and isinstance(metadata["constraints"], list):
-            for c in metadata["constraints"]:
-                c_str = str(c).lower()
-                if "resistor" in c_str:
-                    requires_resistor = True
-                if "pullup" in c_str or "pull-up" in c_str:
-                    requires_pullup = True
+        # Auto-detect missing electrical profile for review gate
+        needs_review = False
+        review_notes = []
+        if category not in ["passive", "platform"]:
+            if not power_dict.get("voltage_range"):
+                needs_review = True
+                review_notes.append("Missing voltage range")
+            if power_dict.get("operating_current_mA") is None and not power_dict.get("is_external_powered"):
+                needs_review = True
+                review_notes.append("Missing operating current (mA)")
+            if not interface_dict.get("protocol"):
+                needs_review = True
+                review_notes.append("Missing interface protocol")
 
         db_params = {
             "id": id_val,
             "name": metadata.get("name") or component_id.replace("_", " ").title(),
-            "category": metadata.get("category") or "other",
+            "category": category,
             "description": metadata.get("description") or "",
             "pins": json.dumps(metadata.get("pins", [])),
-            "power": json.dumps(metadata.get("power", {})),
+            "interface": json.dumps(interface_dict),
+            "power": json.dumps(power_dict),
             "constraints": json.dumps(metadata.get("constraints", [])),
             "compatible_boards": json.dumps(metadata.get("compatible_boards", [])),
             "tags": json.dumps(metadata.get("tags", [])),
-            "operating_voltage": float(voltage_min) if voltage_min is not None else None,
+            "_needs_review": needs_review,
+            "_review_notes": "; ".join(review_notes) if review_notes else None,
             "datasheet_url": datasheet_url or metadata.get("datasheet_url") or "",
             "datasheet_summary": metadata.get("datasheet_summary") or "",
         }
@@ -327,97 +368,85 @@ def ingest_datasheet_task(self, component_id:str, job_id: str, pdf_path:str|None
             conn.execute(text("""
                 INSERT INTO components (
                     id, name, category, description,
-                    pins, power, constraints, compatible_boards, tags,
-                    operating_voltage, datasheet_url, datasheet_summary, qdrant_indexed
+                    pins, interface, power, constraints, compatible_boards, tags,
+                    _needs_review, _review_notes, datasheet_url, datasheet_summary, qdrant_indexed
                 )
                 VALUES (
                     :id, :name, :category, :description,
-                    :pins, :power, :constraints, :compatible_boards, :tags,
-                    :operating_voltage, :datasheet_url, :datasheet_summary, false
+                    :pins, :interface, :power, :constraints, :compatible_boards, :tags,
+                    :_needs_review, :_review_notes, :datasheet_url, :datasheet_summary, false
                 )
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     category = EXCLUDED.category,
                     description = EXCLUDED.description,
                     pins = EXCLUDED.pins,
+                    interface = EXCLUDED.interface,
                     power = EXCLUDED.power,
                     constraints = EXCLUDED.constraints,
                     tags = EXCLUDED.tags,
-                    operating_voltage = EXCLUDED.operating_voltage,
+                    _needs_review = EXCLUDED._needs_review,
+                    _review_notes = EXCLUDED._review_notes,
                     datasheet_url = EXCLUDED.datasheet_url,
                     datasheet_summary = EXCLUDED.datasheet_summary
             """), db_params)
             conn.commit()
+
         # ── Step 4: Chunk Text ───────────────────────────────────────────────
         _publish_progress(r, job_id, "chunking", "Chunking datasheet...", 50)
         chunks = chunk_text(raw_text, component_id)
         if not chunks:
             raise ValueError("Chunking produced no output")
+
         # ── Step 5: Embed Chunks ─────────────────────────────────────────────
         _publish_progress(r, job_id, "embedding", "Generating embeddings (0%)...", 65)
         texts = [c["text"] for c in chunks]
 
         def on_embed_progress(b_num, total_b, is_rate_limited=False, wait_time=0):
             if is_rate_limited:
-                _publish_progress(r, job_id, "rate_limited", f"AI Rates are limited. Retrying in {wait_time}s...", 65)
+                _publish_progress(r, job_id, "embedding", f"AI Rates are limited. Retrying in {wait_time}s...", 70)
             else:
-                pct = 65 + int((b_num / total_b) * 20)  # 65% to 85%
-                _publish_progress(r, job_id, "embedding", f"Generating embeddings ({b_num}/{total_b})...", pct)
+                pct = 65 + int((b_num / total_b) * 20)
+                _publish_progress(r, job_id, "embedding", f"Generating embeddings ({int((b_num/total_b)*100)}%)...", pct)
 
-        vectors = embed_chunks(texts, progress_callback=on_embed_progress)
-        # ── Step 6: Upsert into Qdrant ───────────────────────────────────────
-        _publish_progress(r, job_id, "storing", "Storing in vector database...", 80)
+        embeddings = embed_chunks(texts, progress_callback=on_embed_progress)
+
+        # ── Step 6: Upsert to Qdrant ─────────────────────────────────────────
+        _publish_progress(r, job_id, "indexing", "Indexing in vector database...", 90)
         _ensure_qdrant_collection(qdrant)
-        points = [
-            PointStruct(
+
+        points = []
+        for i, (chunk, vector) in enumerate(zip(chunks, embeddings)):
+            points.append(PointStruct(
                 id=str(uuid.uuid4()),
                 vector=vector,
                 payload={
-                    "component_id": chunk["component_id"],
-                    "chunk_index": chunk["chunk_index"],
+                    "component_id": component_id,
+                    "chunk_index": i,
                     "text": chunk["text"],
-                    "char_start": chunk["char_start"],
-                    "char_end": chunk["char_end"],
-                    "component_name": metadata.get("name", component_id),
-                    "category": metadata.get("category", "unknown"),
+                    "page": chunk.get("page", 1),
+                    "section": chunk.get("section", "general"),
                 }
-            )
-            for chunk, vector in zip(chunks, vectors)
-        ]
+            ))
+
+        # Batch upsert to Qdrant
         qdrant.upsert(collection_name=QDRANT_COLLECTION, points=points)
-        logger.info(f"[CELERY:{job_id}] Upserted {len(points)} vectors into Qdrant")
-        # ── Step 7: Mark as Indexed in PostgreSQL ────────────────────────────
-        _publish_progress(r, job_id, "updating_catalog", "Updating component catalog...", 95)
+        logger.info(f"[CELERY:{job_id}] Upserted {len(points)} points to Qdrant")
+
+        # ── Step 7: Mark Indexed in Postgres ─────────────────────────────────
         with engine.connect() as conn:
-            conn.execute(text(
-                "UPDATE components SET qdrant_indexed = true WHERE id = :id"
-            ), {"id": component_id})
+            conn.execute(
+                text("UPDATE components SET qdrant_indexed = true WHERE id = :id"),
+                {"id": component_id}
+            )
             conn.commit()
-        # Clean up temp file
-        if pdf_path and os.path.exists(pdf_path):
-            os.remove(pdf_path)
-        # ── Complete ─────────────────────────────────────────────────────────
+
+        # ── Step 8: Complete ──────────────────────────────────────────────────
         _publish_complete(r, job_id, metadata)
         logger.info(f"[CELERY:{job_id}] ✓ Ingestion complete for {component_id}")
-        return {"status": "complete", "component_id": component_id, "chunks": len(chunks)}
-    
-    
-    except Exception as exc:
-        logger.error(f"[CELERY:{job_id}] ✗ Ingestion failed: {exc}", exc_info=True)
-        err_str = str(exc).lower()
-        if "429" in err_str or "quota" in err_str or "overloaded" in err_str or "resource_exhausted" in err_str:
-            _publish_progress(r, job_id, "rate_limited", f"AI Rates are limited. Retrying in 30s...", 0)
-        else:
-            _publish_failed(r, job_id, str(exc))
+        return {"status": "complete", "component_id": component_id, "points_indexed": len(points)}
 
-        # Automatic Rollback: delete inindexed orphan row from PostgreSQL if pipeline failed 
-        try: 
-            # how to call async function inside a synchronous celery agent
-            asyncio.run(delete_component_by_id(component_id))
-            logger.info(f"[CLEANUP] Purged PostgreSQL and Qdrant entries for '{component_id}'")
-        
-        except Exception as cleanup_err:
-            logger.warning(f"[CLEANUP] Failed to purge '{component_id}': {cleanup_err}")
-
-
-        raise self.retry(exc=exc, countdown=30)
+    except Exception as e:
+        logger.error(f"[CELERY:{job_id}] Ingestion failed: {e}", exc_info=True)
+        _publish_failed(r, job_id, str(e))
+        raise

@@ -283,6 +283,60 @@ export default function App() {
   );
 }
 
+/* ─── HELPER: Check for missing critical fields ────────────────────── */
+function getMissingCriticalFields(component) {
+  const missing = [];
+  const category = (component.category || "").toLowerCase();
+  const protocol = component.interface?.protocol || "";
+  
+  // Skip validation for non-active categories
+  const skipCategories = ["passive", "sub_peripheral", "platform", "power"];
+  if (skipCategories.includes(category)) {
+    return missing;
+  }
+
+  // Skip validation if protocol is passive or sub_peripheral
+  if (protocol === "passive" || protocol === "sub_peripheral") {
+    return missing;
+  }
+
+  // Check interface dict - protocol is always critical
+  const iface = component.interface || {};
+  if (!iface.protocol) {
+    missing.push("protocol");
+  }
+  if (iface.protocol === "i2c" && !iface.i2c_address) {
+    missing.push("i2c_address");
+  }
+
+  // Check power dict - at least some power info must exist
+  const power = component.power || {};
+  
+  // For external powered components (motors, relays, etc), logic_voltage is not applicable
+  // For logic-level components, logic_voltage should be defined
+  const isExternalPowered = power.is_external_powered === true;
+  if (!isExternalPowered && (power.logic_voltage === null || power.logic_voltage === undefined)) {
+    missing.push("logic_voltage");
+  }
+
+  // voltage_range is critical for all non-passive components
+  if (!power.voltage_range || !Array.isArray(power.voltage_range) || power.voltage_range.length !== 2) {
+    missing.push("voltage_range");
+  }
+
+  // operating_current_mA should be defined for all powered components
+  if (power.operating_current_mA === null || power.operating_current_mA === undefined) {
+    missing.push("operating_current_mA");
+  }
+
+  // is_external_powered is critical to know - it cannot be undefined/null
+  if (power.is_external_powered === null || power.is_external_powered === undefined) {
+    missing.push("is_external_powered");
+  }
+
+  return missing;
+}
+
 /* ─── COMPONENT CARD ITEM ────────────────────────────────────────────── */
 function ComponentCard({ component, isSelected, onSelect, onDelete }) {
   const icon =
@@ -293,9 +347,11 @@ function ComponentCard({ component, isSelected, onSelect, onDelete }) {
     : component.pin_count || 0;
 
   const protocols = Array.isArray(component.protocols) ? component.protocols : [];
+  const missingFields = getMissingCriticalFields(component);
+  const hasWarnings = missingFields.length > 0;
 
   return (
-    <div className={`comp-card ${isSelected ? "selected" : ""}`} onClick={onSelect}>
+    <div className={`comp-card ${isSelected ? "selected" : ""} ${hasWarnings ? "has-warnings" : ""}`} onClick={onSelect}>
       <div className="card-header">
         <span className="card-icon">{icon}</span>
         <div className="card-title-group">
@@ -316,22 +372,56 @@ function ComponentCard({ component, isSelected, onSelect, onDelete }) {
         {component.description || "No description provided."}
       </p>
 
+      {/* Warning Badge for Missing Fields */}
+      {hasWarnings && (
+        <div className="warning-banner">
+          <span className="warning-icon">⚠️</span>
+          <span className="warning-text">{missingFields.length} critical field(s) missing</span>
+        </div>
+      )}
+
       {/* Spec Badges */}
       <div className="spec-row">
         {pinsCount > 0 && (
           <span className="spec-badge">📌 {pinsCount} Pins</span>
         )}
-        {component.operating_voltage && (
+        
+        {/* Voltage - prefer voltage_range from power dict */}
+        {component.power?.voltage_range && component.power.voltage_range.length === 2 ? (
+          <span className="spec-badge">
+            ⚡ {component.power.voltage_range[0]}-{component.power.voltage_range[1]}V
+          </span>
+        ) : component.operating_voltage ? (
           <span className="spec-badge">⚡ {component.operating_voltage}V</span>
+        ) : component.power?.operating_voltage ? (
+          <span className="spec-badge">⚡ {component.power.operating_voltage}V</span>
+        ) : null}
+        
+        {/* Operating Current */}
+        {component.power?.operating_current_mA ? (
+          <span className="spec-badge">🔌 {component.power.operating_current_mA}mA</span>
+        ) : null}
+        
+        {/* Interface Protocol */}
+        {component.interface?.protocol && (
+          <span className="spec-badge proto-badge">
+            📡 {component.interface.protocol.toUpperCase()}
+          </span>
         )}
-        {component.power?.operating_voltage && !component.operating_voltage && (
-          <span className="spec-badge">⚡ {component.power.operating_voltage}</span>
-        )}
+        
+        {/* Fallback for legacy protocols array */}
         {protocols.map((proto) => (
           <span key={proto} className="spec-badge proto-badge">
             📡 {proto}
           </span>
         ))}
+        
+        {/* External Power Indicator */}
+        {component.power?.is_external_powered && (
+          <span className="spec-badge" style={{ background: "rgba(239, 68, 68, 0.2)", borderColor: "rgba(239, 68, 68, 0.4)", color: "#fca5a5" }}>
+            🔋 External
+          </span>
+        )}
       </div>
 
       {/* Card Footer */}
@@ -357,10 +447,23 @@ function ComponentDetailModal({ component, onClose, onUpdate, onDelete }) {
   const [isSavingName, setIsSavingName] = useState(false);
   const [saveError, setSaveError] = useState(null);
 
+  // Metadata editing state
+  const [isEditingMetadata, setIsEditingMetadata] = useState(false);
+  const [isSavingMetadata, setIsSavingMetadata] = useState(false);
+  const [metadataError, setMetadataError] = useState(null);
+  const [power, setPower] = useState(component.power || {});
+  const [iface, setIface] = useState(component.interface || {});
+
+  const missingFields = getMissingCriticalFields(component);
+
   useEffect(() => {
     setNameInput(component.name || "");
     setIsEditingName(false);
     setSaveError(null);
+    setPower(component.power || {});
+    setIface(component.interface || {});
+    setIsEditingMetadata(false);
+    setMetadataError(null);
   }, [component.id, component.name]);
 
   const handleSaveName = async (e) => {
@@ -391,6 +494,34 @@ function ComponentDetailModal({ component, onClose, onUpdate, onDelete }) {
       setSaveError(err.message || "Failed to update name");
     } finally {
       setIsSavingName(false);
+    }
+  };
+
+  const handleSaveMetadata = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    
+    setIsSavingMetadata(true);
+    setMetadataError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/components/${component.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          power,
+          interface: iface,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Server error: ${res.status}`);
+      }
+      const updated = await res.json();
+      if (onUpdate) onUpdate(updated);
+      setIsEditingMetadata(false);
+    } catch (err) {
+      console.error("Failed to update metadata:", err);
+      setMetadataError(err.message || "Failed to update metadata");
+    } finally {
+      setIsSavingMetadata(false);
     }
   };
 
@@ -520,37 +651,431 @@ function ComponentDetailModal({ component, onClose, onUpdate, onDelete }) {
             <p>{component.description || "No detailed description available."}</p>
           </div>
 
+          {/* Missing Fields Warning & Editor */}
+          {missingFields.length > 0 && (
+            <div className="alert-card" style={{ background: "rgba(245, 158, 11, 0.1)", border: "1px solid rgba(245, 158, 11, 0.3)", marginBottom: "16px" }}>
+              <span style={{ color: "var(--accent-amber)" }}>⚠️ Missing critical fields: {missingFields.join(", ")}</span>
+            </div>
+          )}
+
           {/* Technical Specs Grid */}
           <div className="specs-grid">
+            {/* Interface Protocol */}
             <div className="spec-box">
-              <span className="spec-label">Operating Voltage</span>
+              <span className="spec-label">Interface Protocol</span>
               <span className="spec-value">
-                {component.operating_voltage
-                  ? `${component.operating_voltage}V`
-                  : component.power?.operating_voltage || "N/A"}
+                {component.interface?.protocol
+                  ? component.interface.protocol.charAt(0).toUpperCase() + component.interface.protocol.slice(1)
+                  : "N/A"}
               </span>
             </div>
 
+            {/* I2C Address (if applicable) */}
+            {component.interface?.protocol === "i2c" && (
+              <div className="spec-box">
+                <span className="spec-label">I2C Address</span>
+                <span className="spec-value">{component.interface.i2c_address || "N/A"}</span>
+              </div>
+            )}
+
+            {/* Logic Voltage (single value from power dict) */}
             <div className="spec-box">
-              <span className="spec-label">Max Current</span>
+              <span className="spec-label">Logic Voltage</span>
               <span className="spec-value">
-                {component.power?.current_mA
-                  ? `${component.power.current_mA} mA`
+                {component.power?.logic_voltage ? `${component.power.logic_voltage}V` : "N/A"}
+              </span>
+            </div>
+
+            {/* Operating Current */}
+            <div className="spec-box">
+              <span className="spec-label">Operating Current</span>
+              <span className="spec-value">
+                {component.power?.operating_current_mA !== null && component.power?.operating_current_mA !== undefined
+                  ? `${component.power.operating_current_mA} mA`
                   : component.max_current_per_pin_mA
                     ? `${component.max_current_per_pin_mA} mA/pin`
                     : "N/A"}
               </span>
             </div>
 
+            {/* External Power */}
             <div className="spec-box">
-              <span className="spec-label">Total Digital Pins</span>
-              <span className="spec-value">{component.total_digital_pins ?? "N/A"}</span>
+              <span className="spec-label">External Powered</span>
+              <span className="spec-value">
+                {component.power?.is_external_powered !== null && component.power?.is_external_powered !== undefined
+                  ? component.power.is_external_powered ? "Yes 🔋" : "No"
+                  : "N/A"}
+              </span>
             </div>
 
-            <div className="spec-box">
-              <span className="spec-label">Total Analog Pins</span>
-              <span className="spec-value">{component.total_analog_pins ?? "N/A"}</span>
+            {/* Total Digital Pins */}
+            {component.total_digital_pins !== null && component.total_digital_pins !== undefined && (
+              <div className="spec-box">
+                <span className="spec-label">Total Digital Pins</span>
+                <span className="spec-value">{component.total_digital_pins}</span>
+              </div>
+            )}
+
+            {/* Total Analog Pins */}
+            {component.total_analog_pins !== null && component.total_analog_pins !== undefined && (
+              <div className="spec-box">
+                <span className="spec-label">Total Analog Pins</span>
+                <span className="spec-value">{component.total_analog_pins}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Edit Metadata Section (Always Available) */}
+          <div className="detail-group">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+              <h4 style={{ display: "flex", alignItems: "center", gap: "6px", margin: 0 }}>
+                ⚙️ Component Metadata
+              </h4>
+              <button
+                onClick={() => setIsEditingMetadata(!isEditingMetadata)}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: "6px",
+                  background: isEditingMetadata ? "var(--accent-green)" : "var(--accent)",
+                  color: "#fff",
+                  border: "none",
+                  fontWeight: 600,
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                {isEditingMetadata ? "Close" : "✏️ Edit"}
+              </button>
             </div>
+
+            {isEditingMetadata && (
+              <form
+                onSubmit={handleSaveMetadata}
+                style={{
+                  background: "var(--bg-glass)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "8px",
+                  padding: "12px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "12px",
+                }}
+              >
+                {/* Interface Section */}
+                <div>
+                  <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                    Protocol
+                  </label>
+                  <select
+                    value={iface.protocol || ""}
+                    onChange={(e) => setIface({ ...iface, protocol: e.target.value })}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      marginTop: "4px",
+                      borderRadius: "6px",
+                      border: "1px solid var(--border)",
+                      background: "rgba(0, 0, 0, 0.3)",
+                      color: "#fff",
+                      fontSize: "12px",
+                    }}
+                  >
+                    <option value="">-- Select Protocol --</option>
+                    <option value="gpio">GPIO</option>
+                    <option value="i2c">I2C</option>
+                    <option value="spi">SPI</option>
+                    <option value="uart">UART</option>
+                    <option value="onewire">1-Wire</option>
+                    <option value="analog">Analog</option>
+                    <option value="passive">Passive</option>
+                    <option value="sub_peripheral">Sub-Peripheral</option>
+                  </select>
+                </div>
+
+                {iface.protocol === "i2c" && (
+                  <div>
+                    <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                      I2C Address (e.g., 0x27)
+                    </label>
+                    <input
+                      type="text"
+                      value={iface.i2c_address || ""}
+                      onChange={(e) => setIface({ ...iface, i2c_address: e.target.value })}
+                      placeholder="0x27"
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        marginTop: "4px",
+                        borderRadius: "6px",
+                        border: "1px solid var(--border)",
+                        background: "rgba(0, 0, 0, 0.3)",
+                        color: "#fff",
+                        fontSize: "12px",
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* Power Section - Conditional based on Protocol */}
+                {iface.protocol && iface.protocol !== "passive" && (
+                  <>
+                    {/* Show Logic Voltage only for active communication protocols */}
+                    {["gpio", "i2c", "spi", "uart", "onewire", "analog"].includes(iface.protocol) && (
+                      <div>
+                        <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                          Logic Voltage (3.3 or 5.0)
+                        </label>
+                        <select
+                          value={power.logic_voltage || ""}
+                          onChange={(e) => setPower({ ...power, logic_voltage: e.target.value ? parseFloat(e.target.value) : null })}
+                          style={{
+                            width: "100%",
+                            padding: "6px 8px",
+                            marginTop: "4px",
+                            borderRadius: "6px",
+                            border: "1px solid var(--border)",
+                            background: "rgba(0, 0, 0, 0.3)",
+                            color: "#fff",
+                            fontSize: "12px",
+                          }}
+                        >
+                          <option value="">-- Select --</option>
+                          <option value="3.3">3.3V</option>
+                          <option value="5.0">5.0V</option>
+                        </select>
+                      </div>
+                    )}
+
+                    <div>
+                      <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                        Voltage Range Min (e.g., 3.0)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={(power.voltage_range?.[0] ?? "")}
+                        onChange={(e) => {
+                          const newRange = [...(power.voltage_range || [0, 0])];
+                          newRange[0] = e.target.value ? parseFloat(e.target.value) : 0;
+                          setPower({ ...power, voltage_range: newRange });
+                        }}
+                        placeholder="3.0"
+                        style={{
+                          width: "100%",
+                          padding: "6px 8px",
+                          marginTop: "4px",
+                          borderRadius: "6px",
+                          border: "1px solid var(--border)",
+                          background: "rgba(0, 0, 0, 0.3)",
+                          color: "#fff",
+                          fontSize: "12px",
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                        Voltage Range Max (e.g., 5.5)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={(power.voltage_range?.[1] ?? "")}
+                        onChange={(e) => {
+                          const newRange = [...(power.voltage_range || [0, 0])];
+                          newRange[1] = e.target.value ? parseFloat(e.target.value) : 0;
+                          setPower({ ...power, voltage_range: newRange });
+                        }}
+                        placeholder="5.5"
+                        style={{
+                          width: "100%",
+                          padding: "6px 8px",
+                          marginTop: "4px",
+                          borderRadius: "6px",
+                          border: "1px solid var(--border)",
+                          background: "rgba(0, 0, 0, 0.3)",
+                          color: "#fff",
+                          fontSize: "12px",
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                        Operating Current (mA)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={power.operating_current_mA ?? ""}
+                        onChange={(e) => setPower({ ...power, operating_current_mA: e.target.value ? parseFloat(e.target.value) : null })}
+                        placeholder="2.5"
+                        style={{
+                          width: "100%",
+                          padding: "6px 8px",
+                          marginTop: "4px",
+                          borderRadius: "6px",
+                          border: "1px solid var(--border)",
+                          background: "rgba(0, 0, 0, 0.3)",
+                          color: "#fff",
+                          fontSize: "12px",
+                        }}
+                      />
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <input
+                        type="checkbox"
+                        id="is_external_powered"
+                        checked={power.is_external_powered || false}
+                        onChange={(e) => setPower({ ...power, is_external_powered: e.target.checked })}
+                        style={{ cursor: "pointer" }}
+                      />
+                      <label htmlFor="is_external_powered" style={{ fontSize: "12px", cursor: "pointer" }}>
+                        Requires External Power (motors, supplies, high-power devices)
+                      </label>
+                    </div>
+                  </>
+                )}
+
+                {/* Passive/Sub-Peripheral Section - Simplified */}
+                {(iface.protocol === "passive" || iface.protocol === "sub_peripheral") && (
+                  <>
+                    <div>
+                      <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                        Voltage Range Min
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={(power.voltage_range?.[0] ?? "")}
+                        onChange={(e) => {
+                          const newRange = [...(power.voltage_range || [0, 0])];
+                          newRange[0] = e.target.value ? parseFloat(e.target.value) : 0;
+                          setPower({ ...power, voltage_range: newRange });
+                        }}
+                        placeholder="0.0 or 3.0"
+                        style={{
+                          width: "100%",
+                          padding: "6px 8px",
+                          marginTop: "4px",
+                          borderRadius: "6px",
+                          border: "1px solid var(--border)",
+                          background: "rgba(0, 0, 0, 0.3)",
+                          color: "#fff",
+                          fontSize: "12px",
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                        Voltage Range Max
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={(power.voltage_range?.[1] ?? "")}
+                        onChange={(e) => {
+                          const newRange = [...(power.voltage_range || [0, 0])];
+                          newRange[1] = e.target.value ? parseFloat(e.target.value) : 0;
+                          setPower({ ...power, voltage_range: newRange });
+                        }}
+                        placeholder="2.2 or 5.5"
+                        style={{
+                          width: "100%",
+                          padding: "6px 8px",
+                          marginTop: "4px",
+                          borderRadius: "6px",
+                          border: "1px solid var(--border)",
+                          background: "rgba(0, 0, 0, 0.3)",
+                          color: "#fff",
+                          fontSize: "12px",
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                        Operating Current (mA)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={power.operating_current_mA ?? ""}
+                        onChange={(e) => setPower({ ...power, operating_current_mA: e.target.value ? parseFloat(e.target.value) : null })}
+                        placeholder="10.0"
+                        style={{
+                          width: "100%",
+                          padding: "6px 8px",
+                          marginTop: "4px",
+                          borderRadius: "6px",
+                          border: "1px solid var(--border)",
+                          background: "rgba(0, 0, 0, 0.3)",
+                          color: "#fff",
+                          fontSize: "12px",
+                        }}
+                      />
+                    </div>
+
+                    {iface.protocol === "sub_peripheral" && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <input
+                          type="checkbox"
+                          id="is_external_powered"
+                          checked={power.is_external_powered || false}
+                          onChange={(e) => setPower({ ...power, is_external_powered: e.target.checked })}
+                          style={{ cursor: "pointer" }}
+                        />
+                        <label htmlFor="is_external_powered" style={{ fontSize: "12px", cursor: "pointer" }}>
+                          Requires External Power
+                        </label>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {metadataError && (
+                  <span style={{ color: "#ef4444", fontSize: "11px" }}>{metadataError}</span>
+                )}
+
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    type="submit"
+                    disabled={isSavingMetadata}
+                    style={{
+                      flex: 1,
+                      padding: "8px 12px",
+                      borderRadius: "6px",
+                      background: "var(--accent-green)",
+                      color: "#fff",
+                      border: "none",
+                      fontWeight: 600,
+                      fontSize: "12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {isSavingMetadata ? "Saving..." : "✓ Save Metadata"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingMetadata(false)}
+                    disabled={isSavingMetadata}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: "6px",
+                      background: "transparent",
+                      border: "1px solid var(--border)",
+                      color: "var(--text-secondary)",
+                      fontSize: "12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
 
           {/* Pins List */}

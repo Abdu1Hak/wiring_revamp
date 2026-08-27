@@ -154,6 +154,7 @@ export default function ProjectPanel() {
   const [quantityAdjustmentsList, setQuantityAdjustmentsList] = useState([]);
   const [voltageAdjustmentsList, setVoltageAdjustmentsList] = useState([]);
   const [selectedForMissing, setSelectedForMissing] = useState({});
+  const [missingQuantities, setMissingQuantities] = useState({});
   const [customRoleInput, setCustomRoleInput] = useState({});
 
   const [isEditing, setIsEditing] = useState(false);
@@ -162,6 +163,10 @@ export default function ProjectPanel() {
 
   // Final Output State
   const [generationResult, setGenerationResult] = useState(null);
+
+  // Pre-Compatibility Isolated Check State
+  const [preCompatResult, setPreCompatResult] = useState(null);
+  const [isCheckingPreCompat, setIsCheckingPreCompat] = useState(false);
 
   // Derived selected IDs & total counts
   const selectedIds = Object.keys(selectedQuantities).filter(
@@ -528,6 +533,13 @@ export default function ProjectPanel() {
             setNodeMessage(
               "User review required — review hardware quantities, voltages, and roles below."
             );
+          } else if (event.type === "pre_compatibility" || event.node === "pre_compatibility") {
+            setPreCompatResult(event);
+            if (event.status === "pre_compat_failed") {
+              setNodeMessage(`⚠️ Pre-compatibility checks flagged ${event.errors?.length || 0} issue(s).`);
+            } else {
+              setNodeMessage("✓ Circuit Pre-Compatibility Verified!");
+            }
           } else if (event.type === "complete") {
             setGenerationResult(event);
             setHitlData(null);
@@ -541,6 +553,46 @@ export default function ProjectPanel() {
           console.error("Error parsing SSE line:", rawData, e);
         }
       }
+    }
+  };
+
+  // 0. Isolated Pre-Compatibility Check (POST /api/generate/check-pre-compat)
+  const handleCheckPreCompat = async () => {
+    if (selectedIds.length === 0) return;
+    setIsCheckingPreCompat(true);
+    setPreCompatResult(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/generate/check-pre-compat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          board_buckets: boardBuckets.map((b) => ({
+            boardId: b.boardId,
+            boardName: b.boardName,
+            microcontrollerId: b.microcontrollerId,
+            microcontrollerName: b.microcontrollerName,
+            components: b.components || {},
+          })),
+          component_quantities: selectedQuantities,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server error (${response.status}): ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setPreCompatResult(data);
+    } catch (err) {
+      console.error("Pre-compatibility check error:", err);
+      setPreCompatResult({
+        status: "pre_compat_failed",
+        errors: [{ type: "network_error", message: err.message || "Failed to check compatibility" }],
+        warnings: [],
+      });
+    } finally {
+      setIsCheckingPreCompat(false);
     }
   };
 
@@ -665,6 +717,29 @@ export default function ProjectPanel() {
     setUnassignedList((prev) => prev.filter((item) => item.component_id !== cid));
   };
 
+  // Remove an assigned component role instance during HITL review
+  const handleRemoveRoleInstance = (roleKey) => {
+    const { baseId } = parseInstanceKey(roleKey);
+    // Decrement quantity in boardBuckets / selectedQuantities by 1
+    changeComponentQuantity(baseId, -1);
+
+    // Remove from editedRoles
+    setEditedRoles((prev) => {
+      const copy = { ...prev };
+      delete copy[roleKey];
+      return copy;
+    });
+
+    // Remove from categorizedRolesList if multi-board
+    setCategorizedRolesList((prev) =>
+      prev.map((cat) => {
+        const rolesCopy = { ...(cat.roles || {}) };
+        delete rolesCopy[roleKey];
+        return { ...cat, roles: rolesCopy };
+      })
+    );
+  };
+
   // Assign a custom role to an unassigned component, moving it to role_assignments
   const handleAssignCustomRole = (cid) => {
     const roleText = customRoleInput[cid] || "Custom Project Component";
@@ -672,28 +747,43 @@ export default function ProjectPanel() {
     setUnassignedList((prev) => prev.filter((item) => item.component_id !== cid));
   };
 
-  // Add a component for a missing role from the catalog
+  // Add a component for a missing role from the catalog (with quantity support)
   const handleAddMissingComponent = (roleIdx, roleObj) => {
-    const cidToAdd = selectedForMissing[roleIdx];
+    const cidToAdd = selectedForMissing[roleIdx] || (roleObj.suggestion && availableComponents.some(c => c.id === roleObj.suggestion) ? roleObj.suggestion : null);
     if (!cidToAdd) return;
 
+    const qtyToAdd = Math.max(
+      1,
+      parseInt(missingQuantities[roleIdx] ?? (roleObj.quantity_needed || roleObj.count || 1), 10)
+    );
+
     const currentQty = selectedQuantities[cidToAdd] || 0;
-    const nextQty = currentQty + 1;
 
-    changeComponentQuantity(cidToAdd, 1);
+    // Increment quantity in boardBuckets by qtyToAdd
+    changeComponentQuantity(cidToAdd, qtyToAdd);
 
+    // Add indexed instance roles for all newly added units
     setEditedRoles((prev) => {
       const compObj = availableComponents.find((c) => c.id === cidToAdd);
-      const roleText = roleObj.role
-        ? `${roleObj.role}: Required for project function`
-        : `${compObj?.name || cidToAdd}: Required component`;
-
-      const targetKey = nextQty > 1 ? `${cidToAdd}_${nextQty}` : cidToAdd;
-      return { ...prev, [targetKey]: roleText };
+      const nextRoles = { ...prev };
+      for (let i = 1; i <= qtyToAdd; i++) {
+        const instanceNum = currentQty + i;
+        const targetKey = instanceNum > 1 ? `${cidToAdd}_${instanceNum}` : cidToAdd;
+        const roleLabel = roleObj.role
+          ? `${roleObj.role}${qtyToAdd > 1 ? ` (#${i})` : ""}`
+          : `${compObj?.name || cidToAdd}: Required component`;
+        nextRoles[targetKey] = roleLabel;
+      }
+      return nextRoles;
     });
 
     setMissingRolesList((prev) => prev.filter((_, idx) => idx !== roleIdx));
     setSelectedForMissing((prev) => {
+      const copy = { ...prev };
+      delete copy[roleIdx];
+      return copy;
+    });
+    setMissingQuantities((prev) => {
       const copy = { ...prev };
       delete copy[roleIdx];
       return copy;
@@ -1080,22 +1170,164 @@ export default function ProjectPanel() {
             </div>
 
             {!hitlData && (
-              <button
-                type="submit"
-                style={{
-                  ...styles.button,
-                  ...(isLoading || !projectScope.trim() || selectedIds.length === 0
-                    ? styles.buttonDisabled
-                    : {}),
-                }}
-                disabled={isLoading || !projectScope.trim() || selectedIds.length === 0}
-              >
-                {isLoading
-                  ? `⏳ ${nodeMessage || "Analyzing Scope & Verifying Hardware..."}`
-                  : "⚡ Generate Project Wiring Plan"}
-              </button>
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                <button
+                  type="submit"
+                  style={{
+                    ...styles.button,
+                    flex: 2,
+                    minWidth: "220px",
+                    ...(isLoading || !projectScope.trim() || selectedIds.length === 0
+                      ? styles.buttonDisabled
+                      : {}),
+                  }}
+                  disabled={isLoading || !projectScope.trim() || selectedIds.length === 0}
+                >
+                  {isLoading
+                    ? `⏳ ${nodeMessage || "Analyzing Scope & Verifying Hardware..."}`
+                    : "⚡ Generate Project Wiring Plan"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCheckPreCompat}
+                  disabled={isCheckingPreCompat || selectedIds.length === 0}
+                  style={{
+                    padding: "12px 18px",
+                    borderRadius: "8px",
+                    background: "rgba(59, 130, 246, 0.15)",
+                    border: "1px solid rgba(59, 130, 246, 0.4)",
+                    color: "#93c5fd",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    cursor: selectedIds.length === 0 ? "not-allowed" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    transition: "all 0.2s",
+                    flex: 1,
+                    minWidth: "180px",
+                    justifyContent: "center",
+                  }}
+                  title="Run deterministic circuit rules (Pin Budget, PWM Timers, I2C Collision, 5V Regulator Current)"
+                >
+                  {isCheckingPreCompat ? "⏳ Checking..." : "🔍 Check Circuit Compatibility"}
+                </button>
+              </div>
             )}
           </form>
+
+          {/* ── Pre-Compatibility Results Card (Node 3 Standalone) ── */}
+          {preCompatResult && (
+            <div
+              style={{
+                marginTop: "16px",
+                padding: "16px",
+                borderRadius: "10px",
+                background:
+                  preCompatResult.status === "pre_compat_passed"
+                    ? "rgba(16, 185, 129, 0.1)"
+                    : "rgba(239, 68, 68, 0.1)",
+                border: `1px solid ${
+                  preCompatResult.status === "pre_compat_passed"
+                    ? "rgba(16, 185, 129, 0.3)"
+                    : "rgba(239, 68, 68, 0.3)"
+                }`,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "18px" }}>
+                    {preCompatResult.status === "pre_compat_passed" ? "✅" : "⚠️"}
+                  </span>
+                  <h4 style={{ margin: 0, fontSize: "14px", fontWeight: 700, color: preCompatResult.status === "pre_compat_passed" ? "#6ee7b7" : "#fca5a5" }}>
+                    {preCompatResult.status === "pre_compat_passed"
+                      ? "Circuit Pre-Compatibility: PASSED"
+                      : `Circuit Pre-Compatibility: ${preCompatResult.errors?.length || 0} Error(s) Found`}
+                  </h4>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPreCompatResult(null)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--text-secondary)",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {preCompatResult.status === "pre_compat_passed" && (
+                <p style={{ margin: 0, fontSize: "12px", color: "var(--text-secondary)" }}>
+                  ✓ All hardware checks verified: Digital Pin Budget, Analog Channels, PWM Timers, I2C Addresses, and 5V Regulator Current draw are within safety limits.
+                </p>
+              )}
+
+              {/* Errors List */}
+              {Array.isArray(preCompatResult.errors) && preCompatResult.errors.length > 0 && (
+                <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <span style={{ fontSize: "11px", fontWeight: 700, color: "#ef4444", textTransform: "uppercase" }}>
+                    Blocking Errors:
+                  </span>
+                  {preCompatResult.errors.map((err, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        padding: "8px 12px",
+                        background: "rgba(239, 68, 68, 0.15)",
+                        border: "1px solid rgba(239, 68, 68, 0.25)",
+                        borderRadius: "6px",
+                        fontSize: "12px",
+                        color: "#fca5a5",
+                        display: "flex",
+                        gap: "6px",
+                        alignItems: "flex-start",
+                      }}
+                    >
+                      <span>❌</span>
+                      <div>
+                        <strong>[{err.type}]</strong> {err.message}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Warnings List */}
+              {Array.isArray(preCompatResult.warnings) && preCompatResult.warnings.length > 0 && (
+                <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <span style={{ fontSize: "11px", fontWeight: 700, color: "#f59e0b", textTransform: "uppercase" }}>
+                    Notices & Warnings:
+                  </span>
+                  {preCompatResult.warnings.map((warn, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        padding: "8px 12px",
+                        background: "rgba(245, 158, 11, 0.15)",
+                        border: "1px solid rgba(245, 158, 11, 0.25)",
+                        borderRadius: "6px",
+                        fontSize: "12px",
+                        color: "#fcd34d",
+                        display: "flex",
+                        gap: "6px",
+                        alignItems: "flex-start",
+                      }}
+                    >
+                      <span>⚠️</span>
+                      <div>
+                        <strong>[{warn.type}]</strong> {warn.message}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Live Progress Indicator ── */}
           {isLoading && nodeMessage && (
@@ -1355,20 +1587,39 @@ export default function ProjectPanel() {
                     These hardware categories are required by your scope but currently have 0 units selected.
                   </p>
                   <div style={styles.rolesGrid}>
-                    {missingRolesList.map((m, idx) => (
-                      <div key={idx} style={styles.missingItemCard}>
-                        <div style={styles.missingHeader}>
-                          <strong>Needed Role: {m.role}</strong>
-                          <span style={styles.suggestionTag}>
-                            {m.suggestion ? `Suggested: ${m.suggestion}` : "Component Required"}
-                          </span>
-                        </div>
-                        <p style={styles.missingReason}>{m.reason}</p>
+                    {missingRolesList.map((m, idx) => {
+                      const neededCount = m.quantity_needed || m.count || 1;
+                      return (
+                        <div key={idx} style={styles.missingItemCard}>
+                          <div style={styles.missingHeader}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                              <strong>Needed Role: {m.role}</strong>
+                              <span
+                                style={{
+                                  padding: "2px 8px",
+                                  borderRadius: "12px",
+                                  background: neededCount > 1 ? "rgba(239, 68, 68, 0.2)" : "rgba(245, 158, 11, 0.2)",
+                                  border: `1px solid ${neededCount > 1 ? "rgba(239, 68, 68, 0.4)" : "rgba(245, 158, 11, 0.4)"}`,
+                                  color: neededCount > 1 ? "#fca5a5" : "#fcd34d",
+                                  fontSize: "11px",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {neededCount > 1 ? `Requires ${neededCount} units` : "1 unit needed"}
+                              </span>
+                            </div>
+                            <span style={styles.suggestionTag}>
+                              {m.suggestion ? `Suggested: ${m.suggestion}` : "Component Required"}
+                            </span>
+                          </div>
+
+                          {/* Reason */}
+                          <p style={styles.missingReason}>{m.reason}</p>
 
                         <div style={styles.missingActions}>
                           <select
                             style={styles.selectDropdown}
-                            value={selectedForMissing[idx] || ""}
+                            value={selectedForMissing[idx] || (m.suggestion && availableComponents.some(c => c.id === m.suggestion) ? m.suggestion : "")}
                             onChange={(e) =>
                               setSelectedForMissing({
                                 ...selectedForMissing,
@@ -1384,13 +1635,40 @@ export default function ProjectPanel() {
                             ))}
                           </select>
 
+                          {/* Quantity Selector for Missing Components */}
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", background: "rgba(0,0,0,0.3)", padding: "4px 8px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+                            <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Qty:</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="50"
+                              value={missingQuantities[idx] ?? (m.quantity_needed || m.count || 1)}
+                              onChange={(e) =>
+                                setMissingQuantities({
+                                  ...missingQuantities,
+                                  [idx]: Math.max(1, parseInt(e.target.value || "1", 10)),
+                                })
+                              }
+                              style={{
+                                width: "50px",
+                                padding: "4px",
+                                borderRadius: "4px",
+                                background: "rgba(0,0,0,0.4)",
+                                border: "1px solid var(--border)",
+                                color: "#fff",
+                                fontSize: "12px",
+                                textAlign: "center",
+                              }}
+                            />
+                          </div>
+
                           <button
                             type="button"
                             style={styles.addMissingBtn}
                             onClick={() => handleAddMissingComponent(idx, m)}
-                            disabled={!selectedForMissing[idx]}
+                            disabled={!selectedForMissing[idx] && (!m.suggestion || !availableComponents.some(c => c.id === m.suggestion))}
                           >
-                            ➕ Add to Selection
+                            ➕ Add ×{missingQuantities[idx] ?? (m.quantity_needed || m.count || 1)} to Selection
                           </button>
 
                           <button
@@ -1402,7 +1680,8 @@ export default function ProjectPanel() {
                           </button>
                         </div>
                       </div>
-                    ))}
+                    );
+                  })}
                   </div>
                 </div>
               )}
@@ -1528,6 +1807,24 @@ export default function ProjectPanel() {
                                     <span style={styles.singleUnitBadge}>Unit #1</span>
                                   )}
                                   <span style={styles.roleIdBadge}>({roleKey})</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveRoleInstance(roleKey)}
+                                    title={`Remove ${compName} from project selection`}
+                                    style={{
+                                      marginLeft: "auto",
+                                      background: "rgba(239, 68, 68, 0.12)",
+                                      border: "1px solid rgba(239, 68, 68, 0.3)",
+                                      borderRadius: "4px",
+                                      color: "#fca5a5",
+                                      cursor: "pointer",
+                                      fontSize: "12px",
+                                      padding: "2px 6px",
+                                      lineHeight: "1",
+                                    }}
+                                  >
+                                    🗑️
+                                  </button>
                                 </div>
                                 {isEditing ? (
                                   <input
@@ -1572,6 +1869,24 @@ export default function ProjectPanel() {
                               <span style={styles.singleUnitBadge}>Unit #1</span>
                             )}
                             <span style={styles.roleIdBadge}>({roleKey})</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveRoleInstance(roleKey)}
+                              title={`Remove ${compName} from project selection`}
+                              style={{
+                                marginLeft: "auto",
+                                background: "rgba(239, 68, 68, 0.12)",
+                                border: "1px solid rgba(239, 68, 68, 0.3)",
+                                borderRadius: "4px",
+                                color: "#fca5a5",
+                                cursor: "pointer",
+                                fontSize: "12px",
+                                padding: "2px 6px",
+                                lineHeight: "1",
+                              }}
+                            >
+                              🗑️
+                            </button>
                           </div>
                           {isEditing ? (
                             <input
@@ -1586,7 +1901,7 @@ export default function ProjectPanel() {
                               }
                             />
                           ) : (
-                            <p style={styles.roleDesc}>{roleStr}</p>
+                            <p style={styles.roleDesc}>{editedRoles[roleKey] || roleStr}</p>
                           )}
                         </div>
                       );

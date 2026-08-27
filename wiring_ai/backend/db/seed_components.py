@@ -28,17 +28,17 @@ components = [
             {"name": "D11", "type": "digital_io", "voltage": 5, "required": False, "notes": "PWM and SPI MOSI capable."},
             {"name": "D12", "type": "digital_io", "voltage": 5, "required": False, "notes": "SPI MISO capable."},
             {"name": "D13", "type": "digital_io", "voltage": 5, "required": False, "notes": "Pin 13 has onboard LED — may interfere with external circuits."},
-            {"name": "A0", "type": "analog_input", "voltage": 5, "required": False},
-            {"name": "A1", "type": "analog_input", "voltage": 5, "required": False},
-            {"name": "A2", "type": "analog_input", "voltage": 5, "required": False},
-            {"name": "A3", "type": "analog_input", "voltage": 5, "required": False},
-            {"name": "A4", "type": "analog_input", "voltage": 5, "required": False, "notes": "I2C SDA. Also usable as digital/analog IO."},
-            {"name": "A5", "type": "analog_input", "voltage": 5, "required": False, "notes": "I2C SCL. Also usable as digital/analog IO."},
+            {"name": "A0", "type": "analog", "voltage": 5, "required": False},
+            {"name": "A1", "type": "analog", "voltage": 5, "required": False},
+            {"name": "A2", "type": "analog", "voltage": 5, "required": False},
+            {"name": "A3", "type": "analog", "voltage": 5, "required": False},
+            {"name": "A4", "type": "analog", "voltage": 5, "required": False, "notes": "I2C SDA. Also usable as digital/analog IO."},
+            {"name": "A5", "type": "analog", "voltage": 5, "required": False, "notes": "I2C SCL. Also usable as digital/analog IO."},
             {"name": "5V", "type": "power", "voltage": 5, "required": False, "notes": "5V regulated output power rail."},
             {"name": "3.3V", "type": "power", "voltage": 3.3, "required": False, "notes": "3.3V regulated output power rail (150mA max)."},
             {"name": "GND", "type": "ground", "voltage": 0, "required": False, "notes": "Ground connection (common negative reference)."},
             {"name": "VIN", "type": "power", "voltage": 12, "required": False, "notes": "Input voltage rail (7-12V barrel jack or external)."},
-            {"name": "AREF", "type": "analog_input", "voltage": 5, "required": False, "notes": "Analog reference voltage."}
+            {"name": "AREF", "type": "analog", "voltage": 5, "required": False, "notes": "Analog reference voltage."}
         ],
         "power": {
             "voltage": 5.0,
@@ -66,7 +66,7 @@ components = [
             {"pin_id": "D10", "label": "10", "capabilities": ["digital", "pwm", "spi_ss"], "voltage": 5.0, "max_current_mA": 40.0, "reserved": False},
             {"pin_id": "D11", "label": "11", "capabilities": ["digital", "pwm", "spi_mosi"], "voltage": 5.0, "max_current_mA": 40.0, "reserved": False},
             {"pin_id": "D12", "label": "12", "capabilities": ["digital", "spi_miso"], "voltage": 5.0, "max_current_mA": 40.0, "reserved": False},
-            {"pin_id": "D13", "label": "13", "capabilities": ["digital", "spi_sck"], "voltage": 5.0, "max_current_mA": 40.0, "reserved": True, "reserved_reason": "Pin 13 has onboard LED — may interfere with external circuits"},
+            {"pin_id": "D13", "label": "13", "capabilities": ["digital", "spi_sck"], "voltage": 5.0, "max_current_mA": 40.0, "reserved": False, "notes": "Pin 13 has onboard LED"},
             {"pin_id": "A0", "label": "A0", "capabilities": ["analog", "digital"], "voltage": 5.0, "max_current_mA": 40.0, "reserved": False},
             {"pin_id": "A1", "label": "A1", "capabilities": ["analog", "digital"], "voltage": 5.0, "max_current_mA": 40.0, "reserved": False},
             {"pin_id": "A2", "label": "A2", "capabilities": ["analog", "digital"], "voltage": 5.0, "max_current_mA": 40.0, "reserved": False},
@@ -90,7 +90,9 @@ components = [
         "total_analog_pins": 6,
         "total_pwm_pins": 6,
         "has_wifi": False,
-        "has_bluetooth": False
+        "has_bluetooth": False,
+        "power": {"logic_voltage": 5.0, "voltage_range": [5.0, 5.0], "operating_current_mA": 500.0, "is_external_powered": False},
+        "interface": {"protocol": "gpio", "i2c_address": None},
     },
     # 2. Breadboard
     {
@@ -116,8 +118,8 @@ components = [
         "description": "Measures distance using ultrasonic sound.",
         "pins": [
             {"name": "VCC", "type": "power", "voltage": 5.0, "required": True, "notes": "5V power supply"},
-            {"name": "TRIG", "type": "digital_input", "voltage": 5.0, "required": True, "notes": "Trigger pin. Needs minimum 10μs HIGH pulse"},
-            {"name": "ECHO", "type": "digital_output", "voltage": 5.0, "required": True, "notes": "Echo pin. Outputs 5V TTL pulse proportional to distance"},
+            {"name": "TRIG", "type": "digital ", "voltage": 5.0, "required": True, "notes": "Trigger pin. Needs minimum 10μs HIGH pulse"},
+            {"name": "ECHO", "type": "digital ", "voltage": 5.0, "required": True, "notes": "Echo pin. Outputs 5V TTL pulse proportional to distance"},
             {"name": "GND", "type": "ground", "voltage": 0.0, "required": True, "notes": "Ground connection"}
         ],
         "power": {
@@ -147,7 +149,7 @@ components = [
         "description": "Measures temperature and humidity.",
         "pins": [
             {"name": "VCC", "type": "power", "voltage": 5.0, "required": True, "notes": "3V to 5.5V power supply"},
-            {"name": "DATA", "type": "data", "required": True, "notes": "Bidirectional single-bus data line. Requires a 4.7kΩ or 10kΩ pull-up resistor to VCC."},
+            {"name": "DATA", "type": "digital", "required": True, "notes": "Bidirectional single-bus data line. Requires a 4.7kΩ or 10kΩ pull-up resistor to VCC."},
             {"name": "GND", "type": "ground", "voltage": 0.0, "required": True, "notes": "Ground connection"}
         ],
         "power": {
@@ -206,7 +208,7 @@ components = [
         "category": "output",
         "description": "Simple red light output.",
         "pins": [
-            {"name": "anode", "type": "digital_input", "voltage": 2.0, "required": True, "notes": "Positive lead (longer leg). Connects through series resistor."},
+            {"name": "anode", "type": "digital ", "voltage": 2.0, "required": True, "notes": "Positive lead (longer leg). Connects through series resistor."},
             {"name": "cathode", "type": "ground", "voltage": 0.0, "required": True, "notes": "Negative lead (shorter leg, flat side). Connects to GND."}
         ],
         "power": {
@@ -236,7 +238,7 @@ components = [
         "category": "output",
         "description": "Simple green light output.",
         "pins": [
-            {"name": "anode", "type": "digital_input", "voltage": 2.2, "required": True, "notes": "Positive lead (longer leg). Connects through series resistor."},
+            {"name": "anode", "type": "digital ", "voltage": 2.2, "required": True, "notes": "Positive lead (longer leg). Connects through series resistor."},
             {"name": "cathode", "type": "ground", "voltage": 0.0, "required": True, "notes": "Negative lead (shorter leg, flat side). Connects to GND."}
         ],
         "power": {
@@ -267,7 +269,7 @@ components = [
         "category": "output",
         "description": "Produces sound when power is applied.",
         "pins": [
-            {"name": "positive", "type": "digital_input", "voltage": 5.0, "required": True, "notes": "Connect to a digital/PWM pin"},
+            {"name": "positive", "type": "digital ", "voltage": 5.0, "required": True, "notes": "Connect to a digital/PWM pin"},
             {"name": "negative", "type": "ground", "voltage": 0.0, "required": True, "notes": "Connect to GND"}
         ],
         "power": {
@@ -325,7 +327,7 @@ components = [
         "description": "Variable resistor for analog input.",
         "pins": [
             {"name": "VCC", "type": "power", "voltage": 5.0, "required": True, "notes": "Connect to VCC rail (5V or 3.3V)"},
-            {"name": "OUT", "type": "analog_output", "voltage": 5.0, "required": True, "notes": "Connect to analog input pin"},
+            {"name": "OUT", "type": "analog", "voltage": 5.0, "required": True, "notes": "Connect to analog input pin"},
             {"name": "GND", "type": "ground", "voltage": 0.0, "required": True, "notes": "Connect to GND rail"}
         ],
         "power": {
@@ -348,7 +350,7 @@ components = [
         "pins": [
             {"name": "VCC", "type": "power", "voltage": 5.0, "required": True, "notes": "Red wire. Connect to 5V rail."},
             {"name": "GND", "type": "ground", "voltage": 0.0, "required": True, "notes": "Brown wire. Connect to GND."},
-            {"name": "SIGNAL", "type": "digital_input", "voltage": 5.0, "required": True, "notes": "Orange wire. Connect to PWM-capable pin."}
+            {"name": "PWM", "type": "digital ", "voltage": 5.0, "required": True, "notes": "Orange wire. Connect to PWM-capable pin."}
         ],
         "power": {
             "voltage": 5.0,
@@ -460,7 +462,7 @@ components = [
             {"name": "GND_B", "type": "ground", "required": True, "notes": "Ground for rail B. To breadboard -ve rail side B."},
             {"name": "DC_IN", "type": "power", "required": True, "notes": "6.5V-12V DC barrel jack input (centre-positive 5.5x2.1mm)."},
             {"name": "USB_IN", "type": "power", "required": False, "notes": "Mini-USB 5V input alternative."},
-            {"name": "ON_OFF", "type": "digital_input", "required": False, "notes": "Slide switch to enable/disable output."}
+            {"name": "ON_OFF", "type": "digital ", "required": False, "notes": "Slide switch to enable/disable output."}
         ],
         "power": {"voltage": 5.0, "voltage_tolerance": [3.3, 5.0], "current_mA": 700.0, "current_max_mA": 700.0},
         "constraints": [
@@ -517,8 +519,8 @@ components = [
         "category": "passive",
         "description": "General-purpose silicon rectifier diode. 1A forward current, 1000V PIV, ~0.7V forward voltage drop. Used as flyback protection across inductive loads (relays, motors) and in rectifier circuits.",
         "pins": [
-            {"name": "anode", "type": "digital_input", "voltage": 0.7, "required": True, "notes": "Positive terminal (no band). Current flows in during forward bias."},
-            {"name": "cathode", "type": "digital_output", "voltage": 0.7, "required": True, "notes": "Negative terminal (silver/white stripe). Current exits here."}
+            {"name": "anode", "type": "digital ", "voltage": 0.7, "required": True, "notes": "Positive terminal (no band). Current flows in during forward bias."},
+            {"name": "cathode", "type": "digital ", "voltage": 0.7, "required": True, "notes": "Negative terminal (silver/white stripe). Current exits here."}
         ],
         "power": {"voltage": 0.7, "voltage_tolerance": [0.6, 1.1], "current_mA": 1000.0, "current_max_mA": 1000.0},
         "constraints": [
@@ -537,8 +539,8 @@ components = [
         "description": "General-purpose NPN BJT in TO-92 package. 600mA collector current, 40V VCEO, hFE~100 at 10mA. Used as digital switch to drive loads beyond Arduino 20mA GPIO limit (relays, motors, buzzers). Requires base resistor.",
         "pins": [
             {"name": "emitter", "type": "ground", "voltage": 0.0, "required": True, "notes": "Emitter — connect to GND. Leftmost pin on flat-side-facing TO-92 package."},
-            {"name": "base", "type": "digital_input", "voltage": 5.0, "required": True, "notes": "Base — control input via 1kΩ resistor from Arduino GPIO. HIGH turns transistor ON."},
-            {"name": "collector", "type": "digital_output", "voltage": 5.0, "required": True, "notes": "Collector — connects to negative terminal of load. Load positive connects to VCC. Rightmost pin on flat-facing TO-92."}
+            {"name": "base", "type": "digital ", "voltage": 5.0, "required": True, "notes": "Base — control input via 1kΩ resistor from Arduino GPIO. HIGH turns transistor ON."},
+            {"name": "collector", "type": "digital ", "voltage": 5.0, "required": True, "notes": "Collector — connects to negative terminal of load. Load positive connects to VCC. Rightmost pin on flat-facing TO-92."}
         ],
         "power": {"voltage": 5.0, "voltage_tolerance": [0.0, 40.0], "current_mA": 100.0, "current_max_mA": 600.0},
         "constraints": [
@@ -557,7 +559,7 @@ components = [
         "category": "output",
         "description": "Passive piezoelectric buzzer with no internal oscillator. Requires external PWM square wave to produce sound. Frequency determines pitch. Use Arduino tone() function on a PWM pin. Range: 1kHz-5kHz typical.",
         "pins": [
-            {"name": "positive", "type": "digital_input", "voltage": 5.0, "required": True, "notes": "Positive terminal (+). Connect to PWM-capable pin (D3/D5/D6/D9/D10/D11). Use tone(pin, freq)."},
+            {"name": "positive", "type": "digital ", "voltage": 5.0, "required": True, "notes": "Positive terminal (+). Connect to PWM-capable pin (D3/D5/D6/D9/D10/D11). Use tone(pin, freq)."},
             {"name": "negative", "type": "ground", "voltage": 0.0, "required": True, "notes": "Negative terminal. Connect to GND."}
         ],
         "power": {"voltage": 5.0, "voltage_tolerance": [3.0, 5.5], "current_mA": 20.0, "current_max_mA": 30.0},
@@ -596,7 +598,7 @@ components = [
         "category": "output",
         "description": "Blue GaN LED. Forward voltage ~3.0V-3.4V (higher than red/green). Requires correctly sized resistor — smaller value than red/green due to higher Vf. Typical current 10mA-20mA.",
         "pins": [
-            {"name": "anode", "type": "digital_input", "voltage": 3.2, "required": True, "notes": "Positive lead (longer leg). Connect through 180Ω resistor to GPIO or VCC."},
+            {"name": "anode", "type": "digital ", "voltage": 3.2, "required": True, "notes": "Positive lead (longer leg). Connect through 180Ω resistor to GPIO or VCC."},
             {"name": "cathode", "type": "ground", "voltage": 0.0, "required": True, "notes": "Negative lead (shorter leg, flat side). Connect to GND."}
         ],
         "power": {"voltage": 3.2, "voltage_tolerance": [3.0, 3.4], "current_mA": 10.0, "current_max_mA": 20.0},
@@ -615,7 +617,7 @@ components = [
         "category": "output",
         "description": "Yellow AlInGaP LED. Forward voltage ~1.8V-2.2V, similar to red. Typical current 10mA-20mA. Use 220Ω series resistor at 5V. Common for status and warning indicators.",
         "pins": [
-            {"name": "anode", "type": "digital_input", "voltage": 2.0, "required": True, "notes": "Positive lead (longer leg). Connect through 220Ω resistor to GPIO or VCC."},
+            {"name": "anode", "type": "digital ", "voltage": 2.0, "required": True, "notes": "Positive lead (longer leg). Connect through 220Ω resistor to GPIO or VCC."},
             {"name": "cathode", "type": "ground", "voltage": 0.0, "required": True, "notes": "Negative lead (shorter leg, flat side). Connect to GND."}
         ],
         "power": {"voltage": 2.0, "voltage_tolerance": [1.8, 2.2], "current_mA": 10.0, "current_max_mA": 20.0},
@@ -634,10 +636,10 @@ components = [
         "category": "output",
         "description": "4-pin RGB LED, common cathode. Three LED dice (R/G/B) share one GND. Each channel driven individually with its own resistor. Mix PWM for any colour. Vf: Red~2.0V, Green~2.2V, Blue~3.2V.",
         "pins": [
-            {"name": "red_anode", "type": "digital_input", "voltage": 2.0, "required": True, "notes": "Red channel anode. Through 220Ω to PWM GPIO. Longest leg on through-hole package."},
+            {"name": "red_anode", "type": "digital ", "voltage": 2.0, "required": True, "notes": "Red channel anode. Through 220Ω to PWM GPIO. Longest leg on through-hole package."},
             {"name": "common_cathode", "type": "ground", "voltage": 0.0, "required": True, "notes": "Common cathode (GND). Second-longest pin, next to red anode."},
-            {"name": "green_anode", "type": "digital_input", "voltage": 2.2, "required": True, "notes": "Green channel anode. Through 220Ω to PWM GPIO."},
-            {"name": "blue_anode", "type": "digital_input", "voltage": 3.2, "required": True, "notes": "Blue channel anode. Through 100Ω-180Ω to PWM GPIO (higher Vf = smaller resistor from 5V)."}
+            {"name": "green_anode", "type": "digital ", "voltage": 2.2, "required": True, "notes": "Green channel anode. Through 220Ω to PWM GPIO."},
+            {"name": "blue_anode", "type": "digital ", "voltage": 3.2, "required": True, "notes": "Blue channel anode. Through 100Ω-180Ω to PWM GPIO (higher Vf = smaller resistor from 5V)."}
         ],
         "power": {"voltage": 3.2, "voltage_tolerance": [2.0, 3.4], "current_mA": 20.0, "current_max_mA": 60.0},
         "constraints": [
@@ -656,14 +658,14 @@ components = [
         "category": "display",
         "description": "Single-digit common cathode 7-segment display. Segments A-G + decimal point. Requires 8 GPIO pins + GND driven directly, or use 74HC595 to save pins. Vf ~2.0V per segment, 10mA-15mA each.",
         "pins": [
-            {"name": "seg_a", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment A — top horizontal bar. Through 220Ω to GPIO."},
-            {"name": "seg_b", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment B — upper-right vertical bar."},
-            {"name": "seg_c", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment C — lower-right vertical bar."},
-            {"name": "seg_d", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment D — bottom horizontal bar."},
-            {"name": "seg_e", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment E — lower-left vertical bar."},
-            {"name": "seg_f", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment F — upper-left vertical bar."},
-            {"name": "seg_g", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Segment G — middle horizontal bar."},
-            {"name": "seg_dp", "type": "digital_input", "voltage": 2.0, "required": False, "notes": "Decimal point segment. Optional."},
+            {"name": "seg_a", "type": "digital ", "voltage": 2.0, "required": False, "notes": "Segment A — top horizontal bar. Through 220Ω to GPIO."},
+            {"name": "seg_b", "type": "digital ", "voltage": 2.0, "required": False, "notes": "Segment B — upper-right vertical bar."},
+            {"name": "seg_c", "type": "digital ", "voltage": 2.0, "required": False, "notes": "Segment C — lower-right vertical bar."},
+            {"name": "seg_d", "type": "digital ", "voltage": 2.0, "required": False, "notes": "Segment D — bottom horizontal bar."},
+            {"name": "seg_e", "type": "digital ", "voltage": 2.0, "required": False, "notes": "Segment E — lower-left vertical bar."},
+            {"name": "seg_f", "type": "digital ", "voltage": 2.0, "required": False, "notes": "Segment F — upper-left vertical bar."},
+            {"name": "seg_g", "type": "digital ", "voltage": 2.0, "required": False, "notes": "Segment G — middle horizontal bar."},
+            {"name": "seg_dp", "type": "digital ", "voltage": 2.0, "required": False, "notes": "Decimal point segment. Optional."},
             {"name": "common_cathode_1", "type": "ground", "voltage": 0.0, "required": True, "notes": "Common cathode pin 1 (package pin 3). Connect to GND."},
             {"name": "common_cathode_2", "type": "ground", "voltage": 0.0, "required": True, "notes": "Common cathode pin 2 (package pin 8). Connect to GND."}
         ],
@@ -740,6 +742,7 @@ async def seed_database_async():
                     # JSON fields — passed as Python objects, not json.dumps() strings
                     "pins":              comp.get("pins", []),
                     "power":             comp.get("power"),
+                    "interface":         comp.get("interface"),
                     "constraints":       comp.get("constraints", []),
                     "compatible_boards": comp.get("compatible_boards", []),
                     "tags":              comp.get("tags", []),

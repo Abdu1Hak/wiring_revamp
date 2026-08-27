@@ -69,7 +69,7 @@ def _parse_component(row_dict: dict) -> dict:
     - Standardizes boolean values for component flag attributes.
     """
     json_fields = [
-        "pins", "power", "constraints", "compatible_boards",
+        "pins", "interface", "power", "constraints", "compatible_boards",
         "tags", "board_pins", "input_voltage_range",
     ]
     for field in json_fields:
@@ -96,6 +96,27 @@ def _parse_component(row_dict: dict) -> dict:
     for field in ["has_wifi", "has_bluetooth", "_needs_review"]:
         if field in row_dict:
             row_dict[field] = bool(row_dict[field]) if row_dict[field] is not None else False
+
+    # Normalize interface if missing
+    if not row_dict.get("interface") or not isinstance(row_dict["interface"], dict):
+        pins = row_dict.get("pins") or []
+        cat = row_dict.get("category", "")
+        has_sda = any("SDA" in p.get("name", "").upper() for p in pins if isinstance(p, dict))
+        has_scl = any("SCL" in p.get("name", "").upper() for p in pins if isinstance(p, dict))
+        
+        if has_sda and has_scl:
+            protocol = "i2c"
+        elif cat == "passive":
+            protocol = "passive"
+        elif any(k in row_dict.get("name", "").lower() for k in ["motor", "pump"]):
+            protocol = "sub_peripheral"
+        else:
+            protocol = "gpio"
+
+        row_dict["interface"] = {
+            "protocol": protocol,
+            "i2c_address": None
+        }
 
     return row_dict
 
@@ -257,6 +278,51 @@ async def update_component_name(component_id: str, new_name: str) -> dict | None
                 )
             )
             .values(name=clean_name)
+            .returning(components_table)
+        )
+        result = await session.execute(query)
+        await session.commit()
+        row = result.mappings().first()
+        if row:
+            return _parse_component(dict(row))
+        return None
+
+
+async def update_component_metadata(component_id: str, update_data: dict) -> dict | None:
+    """
+    Updates component metadata fields (name, power, interface) in the PostgreSQL database.
+    
+    Args:
+        component_id (str): Component ID or name to update
+        update_data (dict): Dictionary with fields to update (name, power, interface, etc.)
+    
+    Returns:
+        dict | None: Updated component dictionary if successful, None otherwise
+    """
+    if not component_id or not update_data:
+        return None
+
+    norm_id = component_id.strip()
+    
+    # Convert power/interface dicts to JSON if needed
+    values_to_update = {}
+    for key, value in update_data.items():
+        if key in ["power", "interface"]:
+            # Merge with existing data (don't overwrite completely)
+            values_to_update[key] = value
+        else:
+            values_to_update[key] = value
+
+    async with AsyncSessionLocal() as session:
+        query = (
+            components_table.update()
+            .where(
+                or_(
+                    func.lower(components_table.c.id) == norm_id.lower(),
+                    components_table.c.id == norm_id,
+                )
+            )
+            .values(**values_to_update)
             .returning(components_table)
         )
         result = await session.execute(query)

@@ -18,7 +18,7 @@
 import os
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, cast
 from dotenv import load_dotenv
 import redis.asyncio as redis
 
@@ -66,7 +66,8 @@ async def ping_redis() -> bool:
     """
     try:
         client = get_redis_client()
-        return await client.ping()
+        result = await cast(Any, client.ping())
+        return bool(result)
     except Exception as e:
         logger.warning(f"[Redis] Health check ping failed: {e}")
         return False

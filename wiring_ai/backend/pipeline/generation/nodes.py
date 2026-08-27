@@ -40,7 +40,6 @@ async def project_exist(state: Generation):
 
 # ----------- NODE 2: QUERY TRANSLATION ---------------------------
 
-
 ROLE_ASSIGNMENT_PROMPT = """\
 You are an expert electronics and embedded systems engineer.
 Analyze the user's project scope and selected hardware batch.
@@ -68,7 +67,7 @@ Think step-by-step through the structured analysis first, then generate the JSON
 
 5. "voltage_adjustments": If an adjustable power supply / battery is selected but its configured voltage does not match the circuit/motor requirements in the scope (e.g. configured at 5V for 6V-12V motors), suggest the recommended voltage (e.g. "7.4V" or "12V") and reason.
 
-6. "missing_roles": List any component explicitly mentioned in the scope OR strictly required for electrical safety and circuit operation (e.g. motor driver, external power supply, 220Ω current-limiting resistor for bare LEDs, or 4.7kΩ pull-up for DS18B20) where 0 units are selected.
+6. "missing_roles": List any component explicitly mentioned in the scope OR strictly required for electrical safety and circuit operation (e.g. motor driver, external power supply, 220Ω current-limiting resistor for bare LEDs, or 4.7kΩ pull-up for DS18B20) where 0 units are selected. Always specify "quantity_needed" (e.g. 8 for an 8-segment display requiring 8 resistors, 3 for 3 bare LEDs) and clearly state the exact count needed in "reason".
 
 7. "unassigned_components": List any components from "unmentioned_selected" that have no purpose in this scope. Do NOT invent hypothetical uses (e.g. do NOT rationalize a shift register as 'pin expansion').
 
@@ -116,7 +115,8 @@ Respond ONLY with valid JSON matching this schema:
     {{
       "role": "<functional category>",
       "reason": "<reason>",
-      "suggestion": "<part name>"
+      "suggestion": "<part name or component_id, e.g. resistor_220>",
+      "quantity_needed": 1
     }}
   ],
   "unassigned_components": [
@@ -128,8 +128,6 @@ Respond ONLY with valid JSON matching this schema:
   "enriched_scope": "<technically precise rewrite of scope>"
 }}
 """
-
-
 
 async def query_optimization(state: Generation): 
     """
@@ -372,3 +370,190 @@ async def query_optimization(state: Generation):
     state["status"]                     = "hitl_complete"
 
     return state
+
+
+
+
+# -------------- Node 3: Pre-Compatibility Node --------------------
+
+async def pre_compatibility(state: Generation): 
+    """
+    Node 3: Deterministic Pre-Compatibility Engine
+    Performs mathematical circuit checks across all assigned subsystems:
+    1. Digital pin budget
+    2. Analog pin budget
+    3. PWM timer budget
+    4. I2C address collision
+    5. 5V rail current draw limit
+    6. Logic voltage level compatibility
+    """
+    logger.info("[NODE:pre_compatibility] Starting pre-compatibility check...")
+
+    # 1. Grab categorized subsystems from Node 2 (or default to empty list)
+    subsystems = state.get("categorized_roles") or []
+    component_quantities = state.get("component_quantities") or {}
+
+    # 2. Collect all unique component IDs across all subsystems and quantities
+    all_raw_cids = list(component_quantities.keys())
+    for sub in subsystems:
+        mcu_id = sub.get("microcontroller_id") or sub.get("board_id")
+        if mcu_id:
+            all_raw_cids.append(mcu_id)
+        for role_key in (sub.get("roles") or {}).keys():
+            # Strips instance numbers like "dc_motor_1" -> "dc_motor"
+            base_cid = role_key.rsplit("_", 1)[0] if "_" in role_key and role_key.rsplit("_", 1)[1].isdigit() else role_key
+            all_raw_cids.append(base_cid)
+
+    # 3. Query PostgreSQL for full component specifications
+    unique_cids = list(set(all_raw_cids))
+    comp_list = await get_components_by_ids(unique_cids)
+    comp_lookup = {c["id"]: c for c in comp_list}
+    state["component_metadata"] = comp_list
+
+    # 4. Containers for errors (blockers) and warnings (notices)
+    errors = []
+    warnings = []
+    auto_fixed = [] 
+
+    # 5. Run deterministic checks per subsystem (Microcontroller Board)
+    for sub in subsystems: 
+        mcu_id = sub.get("microcontroller_id") or sub.get("board_id") or "arduino_uno"
+        mcu_name = sub.get("microcontroller_name") or sub.get("board_name") or mcu_id
+        mcu = comp_lookup.get(mcu_id) or {}
+        
+        # Board limits with fallbacks (default to standard Uno specs if missing)
+        max_digital = mcu.get("total_digital_pins") if mcu.get("total_digital_pins") is not None else 14
+        max_analog = mcu.get("total_analog_pins") if mcu.get("total_analog_pins") is not None else 6
+        max_pwm = mcu.get("total_pwm_pins") if mcu.get("total_pwm_pins") is not None else 6
+        max_5v_mA = mcu.get("max_5v_rail_mA") if mcu.get("max_5v_rail_mA") is not None else 500.0
+        mcu_voltage = mcu.get("operating_voltage") if mcu.get("operating_voltage") is not None else 5.0
+
+        # Remove reserved MCU pins (e.g. D0/D1 USB serial RX/TX)
+        board_pins = mcu.get("board_pins") or []
+        reserved_digital = sum(1 for bp in board_pins if bp.get("reserved") and "digital" in bp.get("capabilities", []))
+        avail_digital = max_digital - reserved_digital
+
+        # Accumulators for this subsystem
+        req_digital = 0
+        req_analog = 0
+        req_pwm = 0
+        total_5v_current_mA = 0.0
+        i2c_addresses = {}  # address -> list of component names
+
+        roles = sub.get("roles") or {}
+        for role_key, role_name in roles.items():
+            base_cid = role_key.rsplit("_", 1)[0] if "_" in role_key and role_key.rsplit("_", 1)[1].isdigit() else role_key
+            comp = comp_lookup.get(base_cid)
+            if not comp:
+                continue
+
+            category = (comp.get("category") or "").lower()
+            # Skip host microcontroller/board and platform (they don't consume pins on themselves)
+            if category in ["board", "microcontroller", "platform"] or base_cid in [mcu_id, "arduino_uno", "breadboard"]:
+                continue
+
+            comp_name = comp.get("name", base_cid)
+            iface = comp.get("interface") or {}
+            protocol = (iface.get("protocol") or "gpio").lower()
+            power = comp.get("power") or {}
+            pins = comp.get("pins") or []
+
+            # Passives (resistors, diodes, switches) connect inline/in-series and do not consume standalone MCU GPIOs
+            if category == "passive" or protocol == "passive":
+                continue
+
+            # ── Check 1, 2, 3: Pin Budget (digital, analog, pwm) ──
+            for pin in pins: 
+                ptype = (pin.get("type") or "").lower().strip()
+                pname = (pin.get("name") or "").upper()
+
+                if ptype == "pwm" or (ptype == "digital" and pname == "SIGNAL" and "servo" in base_cid.lower()): 
+                    req_pwm += 1 
+                elif ptype == "analog" or (protocol == "analog" and ptype not in ["power", "ground", "passive"]): 
+                    req_analog += 1
+                elif ptype in ["digital", "digital_io"] or (protocol in ["gpio", "onewire"] and ptype not in ["power", "ground", "passive"]): 
+                    req_digital += 1 
+            
+            # ── Check 4: I2C Collision ──
+            if protocol == "i2c": 
+                addr = iface.get("i2c_address")
+                if addr: 
+                    addr_norm = str(addr).lower() 
+                    i2c_addresses.setdefault(addr_norm, []).append(comp_name) 
+            
+            # ── Check 5: Power Rail Current Draw ──
+            is_ext = power.get("is_external_powered", False) 
+            if not is_ext and comp.get("category") != "passive": 
+                current_draw = power.get("operating_current_mA") or 0.0 
+                total_5v_current_mA += current_draw 
+
+            # ── Check 6: Logic Voltage Mismatch ──
+            logic_v = power.get("logic_voltage")
+            if logic_v and mcu_voltage and logic_v > mcu_voltage:
+                warnings.append({
+                    "type": "voltage_mismatch",
+                    "component": comp_name,
+                    "board": mcu_name,
+                    "message": f"{comp_name} operates at {logic_v}V logic but {mcu_name} operates at {mcu_voltage}V. May require level shifting."
+                })
+
+        # ── Evaluate Subsystem Limits ──
+        if req_digital > avail_digital:
+            errors.append({
+                "type": "pin_budget_exceeded",
+                "resource": "digital_pins",
+                "board": mcu_name,
+                "required": req_digital,
+                "available": avail_digital,
+                "message": f"Digital pin budget exceeded on {mcu_name}: requested {req_digital}, available {avail_digital} (excluding reserved serial pins)."
+            })
+        if req_analog > max_analog:
+            errors.append({
+                "type": "pin_budget_exceeded",
+                "resource": "analog_pins",
+                "board": mcu_name,
+                "required": req_analog,
+                "available": max_analog,
+                "message": f"Analog pin budget exceeded on {mcu_name}: requested {req_analog}, available {max_analog}."
+            })
+        if req_pwm > max_pwm:
+            errors.append({
+                "type": "timer_budget_exceeded",
+                "resource": "pwm_pins",
+                "board": mcu_name,
+                "required": req_pwm,
+                "available": max_pwm,
+                "message": f"PWM timer budget exceeded on {mcu_name}: requested {req_pwm} hardware PWM channels, available {max_pwm}."
+            })
+        for addr, comps in i2c_addresses.items():
+            if len(comps) > 1:
+                comp_str = ", ".join(str(c) for c in comps)
+                errors.append({
+                    "type": "i2c_collision",
+                    "address": addr,
+                    "board": mcu_name,
+                    "components": comps,
+                    "message": f"I2C address collision on {mcu_name}: multiple devices ({comp_str}) share address {addr}. Requires I2C multiplexer or address change."
+                })
+        if total_5v_current_mA > max_5v_mA:
+            errors.append({
+                "type": "power_budget_exceeded",
+                "board": mcu_name,
+                "required_mA": total_5v_current_mA,
+                "max_mA": max_5v_mA,
+                "message": f"5V regulator current limit exceeded on {mcu_name}: estimated draw is {total_5v_current_mA:.1f}mA, max allowed is {max_5v_mA:.1f}mA. External power supply required."
+            })
+
+    # 6. Update LangGraph State after all subsystems are evaluated
+    state["pre_compat_errors"] = errors
+    state["pre_compat_warnings"] = warnings
+    state["auto_fixed_components"] = auto_fixed
+    state["status"] = "pre_compat_failed" if errors else "pre_compat_passed"
+    logger.info(f"[NODE:pre_compatibility] Complete. Errors: {len(errors)}, Warnings: {len(warnings)}")
+    return state
+
+
+
+            
+
+    

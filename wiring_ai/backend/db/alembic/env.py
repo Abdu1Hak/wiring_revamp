@@ -49,6 +49,7 @@ def get_url() -> str:
         #       SQLite migration support is not implemented here intentionally —
         #       the app handles its own SQLite schema via seed_components.py.
         url = config.get_main_option("sqlalchemy.url")
+    # pyrefly: ignore [bad-return]
     return url
 
 

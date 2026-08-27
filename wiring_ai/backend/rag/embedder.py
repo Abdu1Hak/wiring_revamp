@@ -70,6 +70,7 @@ def embed_chunks(texts: list[str], progress_callback=None) -> list[list[float]]:
             try:
                 response = _client.models.embed_content(
                     model=EMBEDDING_MODEL,
+                    # pyrefly: ignore [bad-argument-type]
                     contents=batch,
                     config=types.EmbedContentConfig(output_dimensionality=768),
                 )

@@ -46,7 +46,8 @@ components_table = Table(
     # These are stored as JSONB in Postgres (queryable JSON) and as TEXT in SQLite.
     # The app-level _parse_component() function handles deserialization.
     Column("pins",             JSON),   # list of pin objects
-    Column("power",            JSON),   # { voltage, current_mA, ... }
+    Column("interface",        JSON),   # { protocol, i2c_address, ... }
+    Column("power",            JSON),   # { logic_voltage, voltage_range, operating_current_mA, is_external_powered }
     Column("constraints",      JSON),   # list of constraint objects
     Column("compatible_boards",JSON),   # list of board id strings
     Column("tags",             JSON),   # list of tag strings
